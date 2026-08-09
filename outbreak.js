@@ -655,6 +655,7 @@ class OutbreakService {
   tick() {
     const now = Date.now();
     for (const room of this.rooms.values()) {
+      if (!room.connections.size) continue;
       if (room.world.status !== 'active' || room.world.nextTickAt > now) continue;
       const outcome = advanceOutbreak(room.world); room.ticksSinceSave = (room.ticksSinceSave || 0) + 1;
       if (room.ticksSinceSave >= 5 || room.world.status === 'ended') { this.save(room); room.ticksSinceSave = 0; }

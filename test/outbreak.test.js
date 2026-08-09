@@ -106,3 +106,13 @@ test('live ticks send a compact country delta instead of the full planet', () =>
     assert.deepEqual(responseSocket.messages.at(-1).world.countries, {});
   } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
 });
+
+test('an empty saved room pauses instead of consuming simulation CPU', () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'outbreak-pause-test-'));
+  try {
+    const service = new OutbreakService({ saveDir: temporary });
+    const room = service.createRoom({}); startOutbreak(room.world); room.world.nextTickAt = 0;
+    const day = room.world.day; service.tick();
+    assert.equal(room.world.day, day);
+  } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
+});
