@@ -42,6 +42,26 @@ test('diplomacy changes bilateral relations symmetrically', () => {
   assert.equal(getRelation(world, 'UZB', 'KAZ'), before + 12);
 });
 
+test('players can publish attributed world news with a server spam cooldown', () => {
+  const world = createWorld('player-news-test');
+  const player = { id: 'p1', name: 'Редактор', countryCode: null };
+  selectCountry(world, player, 'KAZ');
+  const published = performAction(world, player, { action: 'publish_news', category: 'economy', headline: 'Новый торговый коридор', text: 'Казахстан объявляет об открытии большого международного торгового маршрута.' });
+  assert.equal(published.ok, true);
+  assert.equal(world.playerNews.length, 1);
+  assert.equal(world.playerNews[0].authorCode, 'KAZ');
+  assert.equal(world.playerNews[0].authorName, 'Редактор');
+  assert.equal(world.playerNews[0].category, 'economy');
+  const blocked = performAction(world, player, { action: 'publish_news', category: 'military', headline: 'Второй выпуск', text: 'Этот выпуск не должен пройти раньше серверного ограничения.' });
+  assert.equal(blocked.ok, false);
+  assert.match(blocked.error, /через/);
+  world.countries.KAZ.lastPlayerNewsAt -= 30001;
+  assert.equal(performAction(world, player, { action: 'publish_news', category: 'unknown', headline: '<b>Заявление лидера</b>', text: '<script>Опасная разметка удаляется сервером автоматически.</script>' }).ok, true);
+  assert.equal(world.playerNews[0].category, 'statement');
+  assert.equal(world.playerNews[0].headline.includes('<'), false);
+  assert.equal(world.playerNews[0].text.includes('<'), false);
+});
+
 test('quarter advances the persistent world and peaceful bots act', () => {
   const world = createWorld('turn-test');
   const before = world.countries.FRA.treasury;

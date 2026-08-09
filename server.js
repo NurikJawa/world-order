@@ -7,7 +7,7 @@ const { WebSocketServer, WebSocket } = require('ws');
 const topojson = require('topojson-client');
 const { resumeHash, recoverRoomState } = require('./recovery');
 const {
-  CATALOG, CATALOG_BY_CODE, DEVELOPMENT_ACTIONS, MILITARY_ACTIONS, BATTLE_TACTICS, MILITARY_DOCTRINES, TECHNOLOGY_TREE, NATIONAL_PROJECTS, DECISIONS, STEALABLE_ASSETS,
+  CATALOG, CATALOG_BY_CODE, DEVELOPMENT_ACTIONS, MILITARY_ACTIONS, BATTLE_TACTICS, MILITARY_DOCTRINES, TECHNOLOGY_TREE, NATIONAL_PROJECTS, DECISIONS, STEALABLE_ASSETS, PLAYER_NEWS_CATEGORIES,
   createWorld, migrateWorld, selectCountry, performAction, advanceTurn, advanceWars, advanceResistance, calculateScores, getRelation, ranking
 } = require('./game');
 
@@ -101,7 +101,7 @@ function publicState(room, viewerId) {
     world: room.world,
     relations,
     ranking: ranking(room.world),
-    definitions: { development: DEVELOPMENT_ACTIONS, military: MILITARY_ACTIONS, tactics: BATTLE_TACTICS, doctrines: MILITARY_DOCTRINES, technologies: TECHNOLOGY_TREE, projects: NATIONAL_PROJECTS, decisions: DECISIONS, assets: STEALABLE_ASSETS },
+    definitions: { development: DEVELOPMENT_ACTIONS, military: MILITARY_ACTIONS, tactics: BATTLE_TACTICS, doctrines: MILITARY_DOCTRINES, technologies: TECHNOLOGY_TREE, projects: NATIONAL_PROJECTS, decisions: DECISIONS, assets: STEALABLE_ASSETS, playerNewsCategories: PLAYER_NEWS_CATEGORIES },
     savedAt: room.updatedAt
   };
 }

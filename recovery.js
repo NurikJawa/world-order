@@ -49,7 +49,7 @@ function recoverRoomState({ code, snapshot, requestedToken, catalogCodes, now = 
   world.nextTurnAt = Math.max(now + 5000, Number(world.nextTurnAt) || 0);
   world.news ||= [];
   world.news.unshift({
-    id: crypto.randomUUID(), turn: Number(world.turn) || 1, tone: 'gold',
+    id: crypto.randomUUID(), turn: Number(world.turn) || 1, tone: 'gold', createdAt: now,
     text: 'Комната автоматически восстановлена из резервной копии игрока после перезапуска сервера.'
   });
   world.news = world.news.slice(0, 24);

@@ -81,6 +81,14 @@ const WAR_WEATHER = {
   snow: { name: 'Снегопад', icon: '❄', power: .92, capture: .76, supply: 1.18 },
   storm: { name: 'Штормовой фронт', icon: 'ϟ', power: .86, capture: .58, supply: 1.3 }
 };
+const PLAYER_NEWS_COOLDOWN_MS = 30000;
+const PLAYER_NEWS_CATEGORIES = {
+  politics: { name: 'Политика', icon: '◎', tone: 'blue' },
+  economy: { name: 'Экономика', icon: '◆', tone: 'green' },
+  military: { name: 'Армия', icon: '✦', tone: 'red' },
+  society: { name: 'Общество', icon: '◉', tone: 'gold' },
+  statement: { name: 'Заявление лидера', icon: '◈', tone: 'violet' }
+};
 
 const MILITARY_DOCTRINES = {
   balanced: { name: 'Сбалансированная доктрина', description: 'Без штрафов и узкой специализации.', attack: 1, defense: 1, capture: 1, casualties: 1 },
@@ -313,7 +321,8 @@ function createWorld(seed = crypto.randomUUID()) {
     relations: {},
     wars: [],
     warInvites: [],
-    news: [{ id: crypto.randomUUID(), turn: 1, tone: 'blue', text: 'Началась новая эпоха мировой политики. Все государства выбрали осторожный курс.' }],
+    news: [{ id: crypto.randomUUID(), turn: 1, tone: 'blue', text: 'Началась новая эпоха мировой политики. Все государства выбрали осторожный курс.', createdAt: Date.now() }],
+    playerNews: [],
     nextTurnAt: Date.now() + 60000
   };
   calculateScores(world);
@@ -324,6 +333,8 @@ function migrateWorld(world) {
   world.relations ||= {};
   world.wars ||= [];
   world.warInvites ||= [];
+  world.playerNews ||= [];
+  for (const [index, item] of (world.news || []).entries()) item.createdAt ??= Date.now() - index * 1000;
   for (const country of Object.values(world.countries || {})) {
     country.army ||= {};
     country.army.reserve ??= round(clamp((country.population || 1) * 1.2, 8, 999), 1);
@@ -354,6 +365,7 @@ function migrateWorld(world) {
     country.stolenItems ||= [];
     country.lastTheftTurn ??= null;
     country.lastHostileActionAt ??= 0;
+    country.lastPlayerNewsAt ??= 0;
     country.absorbedBy ??= country.defeated && country.controllerCode && country.occupation?.percent >= 100 ? country.controllerCode : null;
     country.eliminated ??= Boolean(country.absorbedBy);
     if (country.occupation) {
@@ -971,7 +983,7 @@ function resolveAttack(world, attacker, defender, deploymentValue = 60, tacticId
 }
 
 function pushNews(world, text, tone = 'blue') {
-  world.news.unshift({ id: crypto.randomUUID(), turn: world.turn, tone, text });
+  world.news.unshift({ id: crypto.randomUUID(), turn: world.turn, tone, text, createdAt: Date.now() });
   world.news = world.news.slice(0, 24);
 }
 
@@ -1035,8 +1047,29 @@ function performAction(world, player, message) {
   migrateWorld(world);
   const country = world.countries[player.countryCode];
   if (!country) return { ok: false, error: 'Сначала выберите страну' };
-  if (country.eliminated || country.absorbedBy) return { ok: false, error: `Ваша страна полностью присоединена к государству ${CATALOG_BY_CODE[country.absorbedBy]?.name || country.absorbedBy}. Вы продолжаете наблюдать за миром.` };
   const meta = CATALOG_BY_CODE[country.code];
+
+  if (message.action === 'publish_news') {
+    const now = Date.now();
+    const remaining = Math.max(0, PLAYER_NEWS_COOLDOWN_MS - (now - (country.lastPlayerNewsAt || 0)));
+    if (remaining > 0) return { ok: false, error: `Следующую новость можно опубликовать через ${Math.ceil(remaining / 1000)} сек.` };
+    const category = PLAYER_NEWS_CATEGORIES[message.category] ? message.category : 'statement';
+    const headline = String(message.headline || '').replace(/[<>\u0000-\u001f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 90);
+    const text = String(message.text || '').replace(/[<>\u0000-\u001f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 420);
+    if (headline.length < 5) return { ok: false, error: 'Заголовок должен содержать не менее 5 символов' };
+    if (text.length < 12) return { ok: false, error: 'Текст новости должен содержать не менее 12 символов' };
+    const article = {
+      id: crypto.randomUUID(), turn: world.turn, createdAt: now, category,
+      headline, text, authorCode: country.code, authorName: player.name, playerId: player.id
+    };
+    world.playerNews.unshift(article);
+    world.playerNews = world.playerNews.slice(0, 80);
+    country.lastPlayerNewsAt = now;
+    country.lastAction = `Опубликовано заявление «${headline}»`;
+    return { ok: true, toast: 'Новость опубликована для всех игроков' };
+  }
+
+  if (country.eliminated || country.absorbedBy) return { ok: false, error: `Ваша страна полностью присоединена к государству ${CATALOG_BY_CODE[country.absorbedBy]?.name || country.absorbedBy}. Вы продолжаете наблюдать за миром.` };
 
   if (message.action === 'technology') {
     const node = TECH_BY_ID[message.id];
@@ -1560,7 +1593,7 @@ function ranking(world) {
 }
 
 module.exports = {
-  CATALOG, CATALOG_BY_CODE, DEVELOPMENT_ACTIONS, MILITARY_ACTIONS, BATTLE_TACTICS, MILITARY_DOCTRINES, TECHNOLOGY_TREE, NATIONAL_PROJECTS, DECISIONS, STEALABLE_ASSETS,
+  CATALOG, CATALOG_BY_CODE, DEVELOPMENT_ACTIONS, MILITARY_ACTIONS, BATTLE_TACTICS, MILITARY_DOCTRINES, TECHNOLOGY_TREE, NATIONAL_PROJECTS, DECISIONS, STEALABLE_ASSETS, PLAYER_NEWS_CATEGORIES,
   createWorld, migrateWorld, selectCountry, performAction, advanceTurn, advanceWars, advanceResistance, calculateScores,
   getRelation, incomeFor, militaryPower, ranking, clamp, technologyBonuses, theftChance, hostileCooldownRemaining
 };

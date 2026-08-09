@@ -9,6 +9,9 @@ const app = {
   selectedCode: null,
   modalCode: null,
   activeTab: 'overview',
+  newsTab: 'world',
+  newsDraft: { headline: '', text: '', category: 'statement' },
+  headlineIndex: 0,
   layer: 'terrain',
   transform: { x: 0, y: 0, k: 1 },
   drag: null,
@@ -32,6 +35,7 @@ function formatNumber(value, digits = 0) {
   return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: digits }).format(value);
 }
 function money(value) { return `${formatNumber(value, 1)} млрд`; }
+function newsClock(value) { return value ? new Date(value).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}) : '—'; }
 function catalog(code) { return app.state?.catalog.find((c) => c.code === code); }
 function country(code) { return app.state?.world.countries[code]; }
 function me() { return app.state?.players.find((p) => p.id === app.state.viewerId); }
@@ -164,7 +168,12 @@ function connect(connection) {
       showGame();
       if (message.resumed) toast('Сохранённая сессия восстановлена');
     }
-    if (message.type === 'state') { app.state = message; render(); scheduleRecoverySave(); }
+    if (message.type === 'state') {
+      const previousPlayerNews=app.state?.world?.playerNews?.length||0;
+      app.state=message;
+      if((message.world.playerNews?.length||0)>previousPlayerNews)app.headlineIndex=0;
+      render();scheduleRecoverySave();
+    }
     if ((message.type === 'warTick' || message.type === 'worldDelta') && app.state) {
       for (const [code, state] of Object.entries(message.countries || {})) app.state.world.countries[code] = state;
       for (const changedWar of message.wars || []) {
@@ -175,7 +184,7 @@ function connect(connection) {
       app.state.ranking = message.ranking || app.state.ranking;
       app.state.relations = message.relations || app.state.relations;
       app.state.savedAt = message.savedAt || app.state.savedAt;
-      renderTop(); renderMapStyles(); renderInspector(); renderNews();
+      renderTop(); renderMapStyles(); renderInspector(); if(app.newsTab==='world')renderNews();else renderHeadline();
       app.warRenderStep += 1;
       if (app.warRenderStep % 4 === 0 && ['overview','military','rating'].includes(app.activeTab)) renderPanel();
       music.setMode(myCountry()?.atWar?.length || myCountry()?.supportingWarId ? 'war' : 'calm');
@@ -195,7 +204,13 @@ function connect(connection) {
       toast(`${message.message} ${explanation}`,true);
       return;
     }
-    if (message.type === 'toast') toast(message.message);
+    if (message.type === 'toast') {
+      toast(message.message);
+      if(message.message==='Новость опубликована для всех игроков'){
+        app.newsDraft={headline:'',text:'',category:'statement'};
+        if(app.newsTab==='players')renderNews();
+      }
+    }
     if (message.type === 'error') {
       clearTimeout(app.connectionTimer); setEntryBusy(false);
       $('#landingError').textContent = message.message;
@@ -748,7 +763,48 @@ $('#countryInspector').addEventListener('click', (event) => {
 });
 
 function renderNews() {
-  $('#newsFeed').innerHTML = app.state.world.news.map((item) => `<article class="news-item ${item.tone}"><i></i><div><p>${esc(item.text)}</p><small>ХОД ${item.turn}</small></div></article>`).join('');
+  const feed=$('#newsFeed');const categories=app.state.definitions.playerNewsCategories||{};
+  $$('#newsTabs [data-news-tab]').forEach((button)=>button.classList.toggle('active',button.dataset.newsTab===app.newsTab));
+  if(app.newsTab==='world'){
+    feed.innerHTML=app.state.world.news.map((item)=>`<article class="news-item ${item.tone}"><i></i><div><p>${esc(item.text)}</p><small>МИРОВАЯ СВОДКА · ${newsClock(item.createdAt)} · ХОД ${item.turn}</small></div></article>`).join('');
+  }else{
+    const c=myCountry();const seconds=Math.max(0,Math.ceil((30000-(Date.now()-(c?.lastPlayerNewsAt||0)))/1000));
+    const composer=c?`<form id="playerNewsComposer" class="player-news-composer"><header><div><small>НАЦИОНАЛЬНОЕ ИНФОРМАГЕНТСТВО</small><b>${catalog(c.code)?.flag||''} ${esc(catalog(c.code)?.name||c.code)}</b></div><span>ПУБЛИКАЦИЯ ДЛЯ ВСЕГО МИРА</span></header><input id="playerNewsHeadline" maxlength="90" placeholder="Заголовок новости…" value="${esc(app.newsDraft.headline)}"><textarea id="playerNewsText" maxlength="420" placeholder="Напишите заявление, репортаж или сообщение другим игрокам…">${esc(app.newsDraft.text)}</textarea><div class="news-compose-row"><select id="playerNewsCategory">${Object.entries(categories).map(([id,item])=>`<option value="${id}" ${app.newsDraft.category===id?'selected':''}>${item.icon} ${esc(item.name)}</option>`).join('')}</select><span id="playerNewsCounter">${app.newsDraft.text.length} / 420</span></div><button id="publishPlayerNews" ${seconds?'disabled':''}>${seconds?`РЕДАКЦИЯ ГОТОВИТ ВЫПУСК · ${seconds} СЕК.`:'ОПУБЛИКОВАТЬ НОВОСТЬ'}</button></form>`:'';
+    const articles=(app.state.world.playerNews||[]).map((item)=>{const category=categories[item.category]||categories.statement||{};const meta=catalog(item.authorCode);return `<article class="player-news-card ${category.tone||'blue'}"><header><span>${meta?.flag||'🏳️'}</span><div><small>${category.icon||'◈'} ${esc(category.name||'Заявление')}</small><b>${esc(meta?.name||item.authorCode)}</b></div></header><h3>${esc(item.headline)}</h3><p>${esc(item.text)}</p><footer><span>Автор: ${esc(item.authorName||'Лидер')}</span><time>${newsClock(item.createdAt)} · ХОД ${item.turn}</time></footer></article>`}).join('');
+    feed.innerHTML=`${composer}<div class="player-news-list">${articles||'<div class="news-empty"><b>Пока нет публикаций игроков</b><span>Станьте первым лидером, который обратится ко всему миру.</span></div>'}</div>`;
+  }
+  renderHeadline();
+}
+
+function headlineItems(){
+  const categories=app.state?.definitions?.playerNewsCategories||{};
+  const world=(app.state?.world?.news||[]).slice(0,8).map((item,index)=>({source:'МИРОВАЯ ЛЕНТА',headline:item.text,byline:`ХОД ${item.turn}`,createdAt:item.createdAt||-index}));
+  const players=(app.state?.world?.playerNews||[]).slice(0,8).map((item)=>({source:`${categories[item.category]?.icon||'◈'} ${categories[item.category]?.name||'ОТ ИГРОКОВ'}`,headline:item.headline,byline:`${catalog(item.authorCode)?.flag||''} ${catalog(item.authorCode)?.name||item.authorCode} · ${item.authorName}`,createdAt:item.createdAt||0,player:true}));
+  return [...world,...players].sort((a,b)=>b.createdAt-a.createdAt).slice(0,12);
+}
+function renderHeadline(){
+  if(!app.state)return;const items=headlineItems();if(!items.length)return;
+  const item=items[app.headlineIndex%items.length];$('#headlineSource').textContent=item.source;$('#headlineText').textContent=item.headline;$('#headlineByline').textContent=item.byline;$('#headlineTicker').classList.toggle('player-headline',Boolean(item.player));
+}
+
+$('#newsTabs').addEventListener('click',(event)=>{const button=event.target.closest('[data-news-tab]');if(!button)return;app.newsTab=button.dataset.newsTab;renderNews()});
+$('#newsFeed').addEventListener('input',(event)=>{
+  if(event.target.id==='playerNewsHeadline')app.newsDraft.headline=event.target.value;
+  if(event.target.id==='playerNewsText'){app.newsDraft.text=event.target.value;const counter=$('#playerNewsCounter');if(counter)counter.textContent=`${event.target.value.length} / 420`}
+});
+$('#newsFeed').addEventListener('change',(event)=>{if(event.target.id==='playerNewsCategory')app.newsDraft.category=event.target.value});
+$('#newsFeed').addEventListener('submit',(event)=>{
+  if(event.target.id!=='playerNewsComposer')return;event.preventDefault();
+  const headline=app.newsDraft.headline.trim();const text=app.newsDraft.text.trim();
+  if(headline.length<5)return toast('В заголовке нужно минимум 5 символов',true);
+  if(text.length<12)return toast('В тексте нужно минимум 12 символов',true);
+  send({type:'action',action:'publish_news',headline,text,category:app.newsDraft.category});
+});
+$('#headlineNext').addEventListener('click',()=>{app.headlineIndex+=1;renderHeadline()});
+setInterval(()=>{if(!app.state||document.hidden)return;app.headlineIndex+=1;renderHeadline()},7000);
+
+function updateNewsCooldown(){
+  const button=$('#publishPlayerNews');if(!button)return;const seconds=Math.max(0,Math.ceil((30000-(Date.now()-(myCountry()?.lastPlayerNewsAt||0)))/1000));button.disabled=seconds>0;button.textContent=seconds?`РЕДАКЦИЯ ГОТОВИТ ВЫПУСК · ${seconds} СЕК.`:'ОПУБЛИКОВАТЬ НОВОСТЬ';
 }
 
 function openCountryModal() {
@@ -933,6 +989,7 @@ setInterval(() => {
   if (!app.state) return;
   const seconds = Math.max(0, Math.ceil((app.state.world.nextTurnAt - Date.now()) / 1000));
   $('#turnTimer').textContent = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+  updateNewsCooldown();
   const hostileSeconds=Math.max(0,Math.ceil((120000-(Date.now()-(myCountry()?.lastHostileActionAt||0)))/1000));
   if (hostileSeconds !== app.lastHostileSecond && app.selectedCode && !activeWarForCountry(me()?.countryCode)) {
     app.lastHostileSecond=hostileSeconds;
