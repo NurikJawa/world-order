@@ -1,0 +1,7 @@
+node_modules/
+.env
+.env.*
+npm-debug.log*
+data/rooms/*.json
+data/rooms/*.tmp
+.render/

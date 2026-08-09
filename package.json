@@ -1,0 +1,27 @@
+{
+  "name": "world-order",
+  "version": "1.0.0",
+  "description": "Мультиплеерная политическая стратегия на карте мира",
+  "main": "server.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "play": "bash start-game.sh",
+    "dev": "node --watch server.js",
+    "test": "node --test"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "topojson-client": "^3.1.0",
+    "world-atlas": "^2.0.2",
+    "world-countries": "^5.1.0",
+    "ws": "^8.21.3"
+  }
+}

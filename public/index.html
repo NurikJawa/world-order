@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#071018">
+  <title>WORLD ORDER — Политическая стратегия</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="grain"></div>
+
+  <main id="landing" class="landing">
+    <section class="landing-copy">
+      <div class="brand-mark"><span>W</span></div>
+      <p class="eyebrow">ГЛОБАЛЬНАЯ СТРАТЕГИЯ · 2026</p>
+      <h1>WORLD<br><i>ORDER</i></h1>
+      <p class="lead">Возглавьте страну. Стройте экономику. Заключайте союзы. Меняйте баланс сил в одном живом мире.</p>
+      <div class="feature-row">
+        <div><strong>195</strong><span>государств</span></div>
+        <div><strong>∞</strong><span>вариантов истории</span></div>
+        <div><strong>LIVE</strong><span>общий мир</span></div>
+      </div>
+    </section>
+
+    <section class="entry-card">
+      <div class="entry-head">
+        <span class="live-dot"></span>
+        <span>ЦЕНТР УПРАВЛЕНИЯ</span>
+      </div>
+      <label class="field-label" for="playerName">Имя лидера</label>
+      <input id="playerName" class="text-input" maxlength="24" placeholder="Например, Александр" autocomplete="nickname">
+      <button id="createRoom" class="primary-btn"><span>Создать новый мир</span><b>→</b></button>
+      <div class="or"><span>или присоединиться</span></div>
+      <div class="join-row">
+        <input id="roomCode" class="text-input code-input" maxlength="6" placeholder="КОД МИРА" autocomplete="off">
+        <button id="joinRoom" class="secondary-btn">Войти</button>
+      </div>
+      <p class="entry-note">Прогресс автоматически сохраняется на сервере. Вернуться можно с этого устройства.</p>
+      <div id="landingError" class="landing-error"></div>
+    </section>
+  </main>
+
+  <main id="game" class="game hidden">
+    <header class="topbar">
+      <div class="mini-brand"><span class="brand-mark small"><span>W</span></span><div><b>WORLD ORDER</b><small>GEOPOLITICAL COMMAND</small></div></div>
+      <div class="world-clock">
+        <div id="advanceTurn" class="date-button" title="Ходы идут только по общему таймеру">
+          <span id="worldDate">I кв. 2026</span><small>СЛЕДУЮЩИЙ ХОД <b id="turnTimer">00:59</b></small>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="openTechTree" class="tech-top-button"><span>⌬</span><div><small>ОСОБОЕ РАЗВИТИЕ</small><b>ДРЕВО ДЕРЖАВЫ</b></div><em id="techPointBadge">0</em></button>
+        <button id="musicToggle" class="sound-button" title="Включить музыку"><span>♪</span><small>МУЗЫКА</small></button>
+        <button id="copyRoom" class="room-pill"><small>КОД МИРА</small><b id="roomBadge">------</b><span>⧉</span></button>
+        <span id="connectionStatus" class="connection"><i></i> В СЕТИ</span>
+      </div>
+    </header>
+
+    <section id="resourceBar" class="resource-bar">
+      <div class="country-chip"><span id="myFlag">🌐</span><div><b id="myCountryName">Страна не выбрана</b><small id="myLeader">ВЫБЕРИТЕ ГОСУДАРСТВО</small></div></div>
+      <div class="resource"><span class="resource-icon">◈</span><div><small>КАЗНА</small><b id="treasury">—</b></div><em id="income">—</em></div>
+      <div class="resource"><span class="resource-icon">◆</span><div><small>ВВП</small><b id="gdp">—</b></div></div>
+      <div class="resource"><span class="resource-icon">♟</span><div><small>ВЛИЯНИЕ</small><b id="influence">—</b></div></div>
+      <div class="resource knowledge"><span class="resource-icon">⌬</span><div><small>ОЧКИ РАЗВИТИЯ</small><b id="techPoints">—</b></div><em id="techPerTurn">—</em></div>
+      <div class="resource"><span class="resource-icon">◉</span><div><small>СТАБИЛЬНОСТЬ</small><b id="stability">—</b></div></div>
+      <button id="mobileMenu" class="mobile-menu">☰</button>
+    </section>
+
+    <div class="workspace">
+      <aside id="controlPanel" class="control-panel">
+        <nav id="gameTabs" class="game-tabs">
+          <button data-tab="overview" class="active"><span>⌂</span>Обзор</button>
+          <button data-tab="development"><span>⌁</span>Развитие</button>
+          <button data-tab="military"><span>✦</span>Армия</button>
+          <button data-tab="diplomacy"><span>◎</span>Дипломатия</button>
+          <button data-tab="rating"><span>▥</span>Рейтинг</button>
+        </nav>
+        <div id="panelContent" class="panel-content"></div>
+      </aside>
+
+      <section class="map-stage">
+        <div class="map-toolbar">
+          <div class="map-search-wrap"><span>⌕</span><input id="countrySearch" placeholder="Найти страну…" autocomplete="off"><div id="searchResults" class="search-results hidden"></div></div>
+          <div id="mapLayers" class="layer-switch">
+            <button data-layer="terrain" class="active">Биомы</button>
+            <button data-layer="political">Политика</button>
+            <button data-layer="economy">Экономика</button>
+            <button data-layer="military">Сила</button>
+            <button data-layer="relations">Отношения</button>
+          </div>
+        </div>
+        <div id="mapViewport" class="map-viewport">
+          <svg id="worldMap" viewBox="0 0 1200 600" role="img" aria-label="Интерактивная политическая карта мира">
+            <defs id="mapDefs">
+              <pattern id="oceanGrid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#8dc5d8" stroke-opacity=".045" stroke-width="1"/></pattern>
+            </defs>
+            <rect width="1200" height="600" class="ocean"></rect>
+            <rect width="1200" height="600" fill="url(#oceanGrid)"></rect>
+            <g id="terrainGroup"><image id="biomeLayer" href="/assets/natural-earth-fast.webp?v=1" x="0" y="0" width="1200" height="600" preserveAspectRatio="none"></image></g>
+            <g id="mapGroup"></g>
+            <g id="frontGroup"></g>
+            <g id="markerGroup"></g>
+          </svg>
+          <div id="mapTooltip" class="map-tooltip hidden"></div>
+          <div class="map-controls"><button id="zoomIn">+</button><button id="zoomOut">−</button><button id="resetMap">⌂</button></div>
+          <div class="map-legend"><span><i class="human"></i>Игрок</span><span><i class="front"></i>Захвачено</span><span><i class="selected"></i>Выбрано</span><span><i class="micro"></i>Микрогосударство</span></div>
+          <div class="map-coordinates">POLITICAL MAP · LIVE SIMULATION</div>
+        </div>
+      </section>
+
+      <aside id="inspector" class="inspector">
+        <div id="countryInspector"></div>
+        <section class="news-section">
+          <div class="section-title"><span>МИРОВАЯ ЛЕНТА</span><i>LIVE</i></div>
+          <div id="newsFeed" class="news-feed"></div>
+        </section>
+      </aside>
+    </div>
+  </main>
+
+  <div id="countryModal" class="modal hidden">
+    <div class="modal-backdrop"></div>
+    <section class="country-modal-card">
+      <p class="eyebrow">ВАШЕ РЕШЕНИЕ ОКОНЧАТЕЛЬНО</p>
+      <h2>Выберите государство</h2>
+      <p>Выбранную страну нельзя сменить в этой партии. Уже занятые государства недоступны.</p>
+      <div class="modal-search"><span>⌕</span><input id="modalCountrySearch" placeholder="Название страны или региона…"></div>
+      <div id="countryGrid" class="country-grid"></div>
+      <div id="countryConfirm" class="country-confirm hidden">
+        <div><span id="confirmFlag">🏳️</span><div><small>ВЫ ВЫБИРАЕТЕ</small><b id="confirmName">—</b></div></div>
+        <button id="confirmCountry" class="primary-btn">Подтвердить выбор</button>
+      </div>
+    </section>
+  </div>
+
+  <div id="techModal" class="tech-modal hidden">
+    <div class="tech-aurora one"></div><div class="tech-aurora two"></div>
+    <header class="tech-header">
+      <div class="tech-heading"><span class="brand-mark small"><span>W</span></span><div><p>СТРАТЕГИЧЕСКОЕ РАЗВИТИЕ</p><h2>Древо великой державы</h2></div></div>
+      <div class="tech-summary"><div><small>ОЧКИ РАЗВИТИЯ</small><b id="treePoints">0</b></div><div><small>ИЗУЧЕНО</small><b id="treeProgress">0 / 42</b></div><button id="closeTechTree">×</button></div>
+    </header>
+    <div class="tech-intro"><p>Выберите долгосрочный путь страны. Технологии действуют постоянно, соединяются между ветками и сохраняются для всех следующих ходов.</p><div id="techLegend"><span><i class="available"></i>Доступно</span><span><i class="learned"></i>Изучено</span><span><i class="locked"></i>Заблокировано</span></div></div>
+    <div id="techTree" class="tech-tree"></div>
+  </div>
+
+  <div id="toastStack" class="toast-stack"></div>
+  <div id="musicNow" class="music-now hidden"><span>♪</span><div><small>СЕЙЧАС ИГРАЕТ</small><b>Спокойствие мира</b></div></div>
+  <script src="/app.js"></script>
+</body>
+</html>
