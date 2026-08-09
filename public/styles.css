@@ -76,6 +76,10 @@ html.display-scaled .guide-book { width:min(1120px,calc(100% - 36px)); height:mi
 .entry-note.local-warning { padding:10px; color:#e0bc74; border:1px solid rgba(224,188,116,.3); background:rgba(108,75,22,.15); }.entry-note a { color:#83d8c2; }
 .landing-error { min-height: 18px; color: #ef8d86; font-size: 12px; margin-top: 12px; }
 .entry-card button:disabled,.entry-card input:disabled { opacity:.55; cursor:wait; }
+.outbreak-mode-link { display:flex; align-items:center; gap:14px; margin-top:12px; padding:13px 15px; color:#dfe7e9; text-decoration:none; border:1px solid rgba(242,63,88,.28); background:linear-gradient(100deg,rgba(116,20,38,.2),rgba(14,28,35,.45)); transition:.2s; }
+.outbreak-mode-link:hover { border-color:rgba(242,63,88,.66); background:linear-gradient(100deg,rgba(151,26,49,.28),rgba(14,28,35,.6)); transform:translateY(-1px); }
+.outbreak-mode-link>span { display:grid; place-items:center; width:38px; height:38px; flex:0 0 auto; color:#ff7082; font-size:20px; border:1px solid rgba(242,63,88,.4); border-radius:50%; box-shadow:0 0 20px rgba(242,63,88,.12); }
+.outbreak-mode-link div { display:grid; gap:2px; }.outbreak-mode-link small { color:#a56f78; font-size:7px; letter-spacing:.13em; }.outbreak-mode-link b { font:500 15px Georgia,serif; letter-spacing:.1em; }.outbreak-mode-link p { margin:0; color:#819198; font-size:9px; }
 
 .game { height: 100vh; display: grid; grid-template-rows: 62px 61px 36px minmax(0,1fr); background: radial-gradient(circle at 48% 15%, rgba(33,123,116,.12),transparent 38%),#06141a; }
 .topbar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 0 20px; border-bottom: 1px solid var(--line); background: #071219; z-index: 10; }

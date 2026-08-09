@@ -6,6 +6,7 @@ const zlib = require('node:zlib');
 const { WebSocketServer, WebSocket } = require('ws');
 const topojson = require('topojson-client');
 const { resumeHash, recoverRoomState } = require('./recovery');
+const { OutbreakService } = require('./outbreak');
 const {
   CATALOG, CATALOG_BY_CODE, DEVELOPMENT_ACTIONS, MILITARY_ACTIONS, BATTLE_TACTICS, MILITARY_DOCTRINES, TECHNOLOGY_TREE, NATIONAL_PROJECTS, DECISIONS, STEALABLE_ASSETS, PLAYER_NEWS_CATEGORIES,
   STRATEGIC_RESOURCES, POLITICAL_FACTIONS, ADVISORS, UNIT_PROGRAMS, GLOBAL_CRISES, VICTORY_PATHS, WAR_TERRAINS,
@@ -15,8 +16,10 @@ const {
 const PORT = Number(process.env.PORT) || 3080;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const SAVE_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, 'data', 'rooms');
+const OUTBREAK_SAVE_DIR = process.env.DATA_DIR ? path.join(path.resolve(process.env.DATA_DIR), 'outbreak') : path.join(__dirname, 'data', 'outbreak');
 const rooms = new Map();
 fs.mkdirSync(SAVE_DIR, { recursive: true });
+const outbreakService = new OutbreakService({ saveDir: OUTBREAK_SAVE_DIR });
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -173,6 +176,7 @@ function hello(socket, message) {
 function handleMessage(socket, raw) {
   let message;
   try { message = JSON.parse(raw.toString()); } catch { return send(socket, { type: 'error', message: 'Некорректное сообщение.' }); }
+  if (message.type === 'outbreakHello' || socket.gameMode === 'outbreak') return outbreakService.handle(socket, message);
   if (message.type === 'hello') return hello(socket, message);
   const room = rooms.get(socket.roomCode);
   const player = room?.players.find((p) => p.id === socket.playerId);
@@ -195,14 +199,14 @@ function serve(request, response) {
   const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
   if (url.pathname === '/health') {
     response.writeHead(200, { 'content-type': MIME['.json'] });
-    return response.end(JSON.stringify({ ok: true, rooms: rooms.size, countries: CATALOG.length }));
+    return response.end(JSON.stringify({ ok: true, rooms: rooms.size, outbreakRooms: outbreakService.rooms.size, countries: CATALOG.length }));
   }
   if (url.pathname === '/api/map') {
     const acceptsGzip = /\bgzip\b/.test(request.headers['accept-encoding'] || '');
     response.writeHead(200, { 'content-type': MIME['.json'], 'cache-control': 'public, max-age=86400', ...(acceptsGzip ? { 'content-encoding': 'gzip' } : {}) });
     return response.end(acceptsGzip ? MAP_GZIP : MAP_JSON);
   }
-  const requested = url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname);
+  const requested = url.pathname === '/' ? '/index.html' : ['/outbreak','/outbreak/'].includes(url.pathname) ? '/outbreak/index.html' : decodeURIComponent(url.pathname);
   const target = path.normalize(path.join(PUBLIC_DIR, requested));
   if (!target.startsWith(PUBLIC_DIR)) { response.writeHead(403); return response.end('Forbidden'); }
   fs.readFile(target, (error, data) => {
@@ -218,6 +222,7 @@ const wss = new WebSocketServer({ server, maxPayload: 2 * 1024 * 1024 });
 wss.on('connection', (socket) => {
   socket.on('message', (raw) => handleMessage(socket, raw));
   socket.on('close', () => {
+    if (socket.gameMode === 'outbreak') return outbreakService.disconnect(socket);
     const room = rooms.get(socket.roomCode);
     if (room?.connections.get(socket.playerId) === socket) { room.connections.delete(socket.playerId); broadcast(room); }
   });
@@ -226,6 +231,7 @@ wss.on('connection', (socket) => {
 
 setInterval(() => {
   const now = Date.now();
+  outbreakService.tick();
   for (const room of rooms.values()) {
     if (room.world.nextTurnAt <= now) { advanceTurn(room.world); saveRoom(room); broadcast(room); continue; }
     const hasWar = room.world.wars?.some((war) => war.status === 'active');

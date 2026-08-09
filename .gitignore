@@ -4,4 +4,6 @@ node_modules/
 npm-debug.log*
 data/rooms/*.json
 data/rooms/*.tmp
+data/outbreak/*.json
+data/outbreak/*.tmp
 .render/

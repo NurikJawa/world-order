@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#071117">
+  <title>OUTBREAK PROTOCOL — Сетевая стратегия</title>
+  <link rel="stylesheet" href="/outbreak/styles.css">
+</head>
+<body>
+  <main id="landing" class="landing">
+    <div class="landing-grid"></div>
+    <section class="hero">
+      <div class="bio-mark"><span>OP</span><i></i></div>
+      <p class="eyebrow">АСИММЕТРИЧНАЯ СТРАТЕГИЯ · 2–10 ИГРОКОВ</p>
+      <h1>OUTBREAK<br><em>PROTOCOL</em></h1>
+      <p class="lead">Один мир. Две команды. Создайте идеальную эпидемию — или соберите международный штаб и остановите её до глобального коллапса.</p>
+      <div class="side-preview">
+        <article class="pathogen"><span>✣</span><div><b>СИНДИКАТ ПАТОГЕНА</b><p>Эволюция, скрытая передача, мутации и саботаж исследований.</p></div></article>
+        <article class="response"><span>✚</span><div><b>ГЛОБАЛЬНЫЙ ШТАБ</b><p>Разведка, локальные меры, медицина и массовая вакцинация.</p></div></article>
+      </div>
+    </section>
+    <section class="entry-card">
+      <header><i></i><span>ЗАЩИЩЁННЫЙ КАНАЛ</span><b>LIVE</b></header>
+      <label for="playerName">ПОЗЫВНОЙ</label>
+      <input id="playerName" maxlength="24" placeholder="Имя участника" autocomplete="nickname">
+      <div class="team-choice" id="entryTeamChoice">
+        <button data-entry-team="pathogen" class="active pathogen"><span>✣</span><b>ПАТОГЕН</b><small>Атаковать мир</small></button>
+        <button data-entry-team="response" class="response"><span>✚</span><b>ВРАЧИ</b><small>Спасти мир</small></button>
+        <button data-entry-team="auto"><span>↔</span><b>АВТО</b><small>Баланс команд</small></button>
+      </div>
+      <button id="createRoom" class="primary-button"><span>СОЗДАТЬ ОПЕРАЦИЮ</span><b>→</b></button>
+      <div class="divider"><span>ИЛИ ВОЙТИ ПО КОДУ</span></div>
+      <div class="join-row"><input id="roomCode" maxlength="6" placeholder="КОД" autocomplete="off"><button id="joinRoom">ВОЙТИ</button></div>
+      <p class="entry-note">Состояние матча сохраняется на сервере и резервно у создателя комнаты. Повторный вход возвращает вашу команду и роль.</p>
+      <div id="landingError" class="landing-error"></div>
+      <a class="world-order-link" href="/">← Вернуться в WORLD ORDER</a>
+    </section>
+  </main>
+
+  <main id="game" class="game hidden">
+    <header class="topbar">
+      <div class="mini-brand"><div class="bio-mark small"><span>OP</span><i></i></div><div><b>OUTBREAK PROTOCOL</b><small>GLOBAL BIOSECURITY NETWORK</small></div></div>
+      <div class="operation-clock"><small>ДЕНЬ ОПЕРАЦИИ</small><b id="worldDay">000</b><span id="tickPulse">СИМУЛЯЦИЯ АКТИВНА</span></div>
+      <div class="top-actions">
+        <button id="openGuide" class="icon-button" title="Полевой справочник">?</button>
+        <button id="openEvolution" class="evolution-button"><span id="evolutionIcon">✣</span><div><small id="evolutionKicker">КОМАНДНОЕ РАЗВИТИЕ</small><b id="evolutionLabel">ЭВОЛЮЦИЯ</b></div><em id="teamPointBadge">0</em></button>
+        <button id="musicToggle" class="icon-button sound" title="Включить музыку">♪</button>
+        <button id="copyRoom" class="room-button"><small>КОД ОПЕРАЦИИ</small><b id="roomBadge">------</b><span>⧉</span></button>
+        <div id="connectionStatus" class="connection"><i></i><span>В СЕТИ</span></div>
+      </div>
+    </header>
+
+    <section class="global-stats">
+      <div id="teamIdentity" class="team-identity pathogen"><span>✣</span><div><small>ВАША СТОРОНА</small><b>СИНДИКАТ ПАТОГЕНА</b></div></div>
+      <div class="global-stat infected"><small>АКТИВНО ЗАРАЖЕНЫ</small><b id="globalInfected">0</b><em id="infectedPercent">0%</em></div>
+      <div class="global-stat severe"><small>ТЯЖЁЛЫЕ СЛУЧАИ</small><b id="globalSevere">0</b></div>
+      <div class="global-stat deaths"><small>ПОГИБЛО</small><b id="globalDeaths">0</b></div>
+      <div class="global-stat vaccine"><small>ИССЛЕДОВАНИЕ ВАКЦИНЫ</small><b id="vaccineProgress">0%</b><div class="mini-progress"><i id="vaccineBar"></i></div></div>
+      <div class="global-stat trust"><small>МИРОВОЕ ДОВЕРИЕ</small><b id="globalTrust">—</b></div>
+      <button id="mobilePanel" class="mobile-panel">☰</button>
+    </section>
+
+    <section class="alert-ticker"><div><i></i><span>ГЛОБАЛЬНАЯ СВОДКА</span></div><p id="headline">Система ожидает начала операции…</p><b id="headlineDay">ДЕНЬ 0</b></section>
+
+    <section class="workspace">
+      <aside id="controlPanel" class="control-panel">
+        <nav id="panelTabs"><button data-panel="command" class="active"><span>⌘</span>Командование</button><button data-panel="team"><span>♟</span>Команда</button><button data-panel="chat"><span>◌</span>Связь</button></nav>
+        <div id="panelContent" class="panel-content"></div>
+      </aside>
+
+      <section class="map-stage">
+        <div class="map-toolbar">
+          <div class="map-search"><span>⌕</span><input id="countrySearch" placeholder="Найти страну…" autocomplete="off"><div id="searchResults" class="search-results hidden"></div></div>
+          <div id="mapLayers" class="map-layers"><button data-layer="spread" class="active">Распространение</button><button data-layer="detection">Обнаружение</button><button data-layer="health">Медицина</button><button data-layer="vaccine">Вакцинация</button></div>
+        </div>
+        <div id="mapViewport" class="map-viewport">
+          <svg id="worldMap" viewBox="0 0 1200 600" role="img" aria-label="Карта глобальной эпидемии">
+            <defs id="mapDefs"><pattern id="oceanGrid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#8dc5d8" stroke-opacity=".035"/></pattern></defs>
+            <rect width="1200" height="600" class="ocean"></rect><rect width="1200" height="600" fill="url(#oceanGrid)"></rect>
+            <g id="terrainGroup"><image id="biomeLayer" href="/assets/natural-earth-fast.webp?v=1" x="0" y="0" width="1200" height="600" preserveAspectRatio="none"></image></g>
+            <g id="mapGroup"></g><g id="pulseGroup"></g><g id="markerGroup"></g>
+          </svg>
+          <div id="mapTooltip" class="map-tooltip hidden"></div>
+          <div class="map-controls"><button id="zoomIn">+</button><button id="zoomOut">−</button><button id="resetMap">⌂</button></div>
+          <div class="map-legend"><span><i class="low"></i>Единичные случаи</span><span><i class="high"></i>Крупная вспышка</span><span><i class="unknown"></i>Нет данных</span></div>
+          <div class="map-status"><i></i><span id="mapStatusText">КАРТА ОБНОВЛЯЕТСЯ В РЕАЛЬНОМ ВРЕМЕНИ</span></div>
+        </div>
+      </section>
+
+      <aside id="inspector" class="inspector"><div id="countryInspector" class="inspector-content"><div class="empty-inspector"><span>◎</span><b>ВЫБЕРИТЕ СТРАНУ</b><p>Нажмите на государство, чтобы изучить вспышку и провести локальную операцию.</p></div></div><section class="event-section"><header><span>МИРОВАЯ ЛЕНТА</span><i>LIVE</i></header><div id="eventFeed" class="event-feed"></div></section></aside>
+    </section>
+  </main>
+
+  <div id="lobbyModal" class="lobby-modal hidden">
+    <div class="lobby-backdrop"></div>
+    <section class="lobby-card">
+      <header><div><small>ПОДГОТОВКА ОПЕРАЦИИ · ДО 10 ИГРОКОВ</small><h2>Командный центр</h2><p>Соберите обе стороны, распределите уникальные роли и выберите регион нулевого пациента.</p></div><div class="lobby-code"><small>КОД КОМНАТЫ</small><button id="lobbyCopyCode">------ ⧉</button></div></header>
+      <div class="lobby-main">
+        <section class="lobby-team pathogen"><header><span>✣</span><div><small>АТАКУЮЩАЯ СТОРОНА</small><h3>Синдикат патогена</h3></div><b id="pathogenCount">0 / 5</b></header><div id="pathogenPlayers" class="lobby-players"></div><button data-switch-team="pathogen">ВСТУПИТЬ В СИНДИКАТ</button></section>
+        <div class="versus"><span>VS</span><i></i></div>
+        <section class="lobby-team response"><header><span>✚</span><div><small>ЗАЩИТНИКИ МИРА</small><h3>Глобальный штаб</h3></div><b id="responseCount">0 / 5</b></header><div id="responsePlayers" class="lobby-players"></div><button data-switch-team="response">ВСТУПИТЬ В ШТАБ</button></section>
+      </div>
+      <div class="lobby-config"><div id="specialtyPicker"><small>ВАША СПЕЦИАЛИЗАЦИЯ</small><div id="specialtyOptions"></div></div><div id="originPicker"><small>ПАРАМЕТРЫ ПАТОГЕНА</small><div><input id="pathogenName" maxlength="22" placeholder="Название патогена"><button id="savePathogenName">ПРИМЕНИТЬ</button></div><select id="originSelect" aria-label="Регион нулевого пациента"></select><p id="originLabel">Регион нулевого пациента выбирает команда патогена</p></div></div>
+      <footer><div><i id="lobbyReadyDot"></i><span id="lobbyStatus">Нужен минимум один игрок в каждой команде</span></div><button id="startOutbreak">НАЧАТЬ ОПЕРАЦИЮ</button></footer>
+    </section>
+  </div>
+
+  <div id="evolutionModal" class="evolution-modal hidden"><div class="evolution-backdrop" data-close-evolution></div><section class="evolution-shell"><header><div><small id="treeTeamKicker">КОМАНДНОЕ РАЗВИТИЕ</small><h2 id="treeTitle">Эволюция патогена</h2><p id="treeDescription">Каждое решение общее для всей команды и действует во всех странах.</p></div><div><span><small>ДОСТУПНО</small><b id="treePoints">0</b></span><button id="closeEvolution">×</button></div></header><div id="evolutionTree" class="evolution-tree"></div></section></div>
+
+  <div id="guideModal" class="guide-modal hidden"><div class="guide-backdrop" data-close-guide></div><section class="guide-card"><header><div><small>OUTBREAK PROTOCOL · ПОЛЕВОЙ СПРАВОЧНИК</small><h2>Как устроена операция</h2></div><button id="closeGuide">×</button></header><nav id="guideTabs"><button class="active" data-guide="rules">Правила</button><button data-guide="pathogen">Патоген</button><button data-guide="response">Врачи</button><button data-guide="map">Карта и данные</button><button data-guide="multiplayer">Командная игра</button></nav><div id="guidePages" class="guide-pages"></div></section></div>
+
+  <div id="endModal" class="end-modal hidden"><div class="end-card"><small>ОПЕРАЦИЯ ЗАВЕРШЕНА</small><span id="endIcon">✣</span><h2 id="endTitle">Победа</h2><p id="endReason"></p><div id="endStats"></div><button id="closeEnd">ПРОДОЛЖИТЬ ОБЗОР МИРА</button></div></div>
+  <div id="toastStack" class="toast-stack"></div>
+  <div id="musicNow" class="music-now hidden"><span>♪</span><div><small>СЕЙЧАС ИГРАЕТ</small><b>Нулевая линия</b></div></div>
+  <script src="/outbreak/app.js"></script>
+</body>
+</html>
