@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  CATALOG, createWorld, selectCountry, performAction, advanceTurn, getRelation, incomeFor, theftChance
+  CATALOG, createWorld, selectCountry, performAction, advanceTurn, advanceWars, getRelation, incomeFor, theftChance
 } = require('../game');
 
 test('catalog contains 195 unique playable states with Russian names', () => {
@@ -64,6 +64,42 @@ test('war requires poor relations and supports operations and peace', () => {
   assert.equal(performAction(world, player, { action: 'conflict', id: 'attack', target: 'UZB' }).ok, true);
   assert.equal(performAction(world, player, { action: 'diplomacy', id: 'peace', target: 'UZB' }).ok, true);
   assert.equal(world.countries.KAZ.atWar.length, 0);
+});
+
+test('declaring war starts a continuous automatic front without a battle action', () => {
+  const world = createWorld('automatic-front-test');
+  const player = { id: 'p1', name: 'Лидер', countryCode: null };
+  selectCountry(world, player, 'KAZ');
+  const attacker = world.countries.KAZ; const defender = world.countries.UZB;
+  Object.assign(attacker.army, { manpower: 240, equipment: 92, readiness: 92, air: 82, defense: 80, supplies: 100, morale: 92, experience: 45 });
+  Object.assign(defender.army, { manpower: 70, equipment: 42, readiness: 52, air: 24, defense: 45, supplies: 82, morale: 66, experience: 14 });
+  world.relations['KAZ:UZB'] = -70;
+  assert.equal(performAction(world, player, { action: 'conflict', id: 'declare', target: 'UZB' }).ok, true);
+  const war = world.wars[0]; const attackerBefore = attacker.army.manpower; const defenderBefore = defender.army.manpower;
+  let now = war.nextBattleAt;
+  for (let tick = 0; tick < 8; tick += 1) { assert.equal(advanceWars(world, now).changed, true); now = war.nextBattleAt; }
+  assert.ok(war.front > 0);
+  assert.equal(defender.occupation.by, 'KAZ');
+  assert.ok(defender.occupation.percent > 0);
+  assert.ok(attacker.army.manpower < attackerBefore);
+  assert.ok(defender.army.manpower < defenderBefore);
+  assert.equal(war.lastOperation.automatic, true);
+});
+
+test('a much stronger army automatically completes territorial conquest', () => {
+  const world = createWorld('automatic-annexation-test');
+  const player = { id: 'p1', name: 'Лидер', countryCode: null };
+  selectCountry(world, player, 'KAZ');
+  const attacker = world.countries.KAZ; const defender = world.countries.UZB;
+  Object.assign(attacker.army, { manpower: 500, equipment: 100, readiness: 100, air: 100, defense: 100, supplies: 100, morale: 100, experience: 70 });
+  Object.assign(defender.army, { manpower: 5, equipment: 10, readiness: 20, air: 2, defense: 10, supplies: 40, morale: 35, experience: 2 });
+  world.relations['KAZ:UZB'] = -70;
+  performAction(world, player, { action: 'conflict', id: 'declare', target: 'UZB' });
+  const war = world.wars[0]; let now = war.nextBattleAt;
+  for (let tick = 0; tick < 100 && war.status === 'active'; tick += 1) { advanceWars(world, now); now = war.nextBattleAt; }
+  assert.equal(war.status, 'annexed');
+  assert.equal(defender.controllerCode, 'KAZ');
+  assert.equal(defender.occupation.percent, 100);
 });
 
 test('army deployment moves a persistent territorial front and captures treasury', () => {

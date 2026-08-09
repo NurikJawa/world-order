@@ -72,6 +72,8 @@ const BATTLE_TACTICS = {
   encirclement: { name: 'Операция на окружение', description: 'Манёвр даёт много территории и усиливает потери противника.', attack: 1.08, capture: 1.38, casualties: .9, enemyCasualties: 1.25, supply: 1.18, minDeployment: 40, requires: 'combined_arms' }
 };
 
+const WAR_TICK_MS = 1400;
+
 const MILITARY_DOCTRINES = {
   balanced: { name: 'Сбалансированная доктрина', description: 'Без штрафов и узкой специализации.', attack: 1, defense: 1, capture: 1, casualties: 1 },
   maneuver: { name: 'Манёвренная война', description: '+8% атака и +14% продвижение, −6% оборона.', attack: 1.08, defense: .94, capture: 1.14, casualties: 1.05 },
@@ -347,6 +349,9 @@ function migrateWorld(world) {
     war.operationsByTurn ||= {};
     war.battles ||= [];
     war.casualties ||= { a: 0, b: 0 };
+    war.battleTicks ??= 0;
+    war.nextBattleAt ??= Date.now() + 900;
+    war.lastReportedMilestone ??= '';
   }
   const activePairs = new Set(world.wars.filter((war) => war.status === 'active').map((war) => relationKey(war.a, war.b)));
   for (const country of Object.values(world.countries || {})) {
@@ -566,6 +571,110 @@ function applyCoalitionLosses(members, totalLosses, equipmentLoss, supplyUse, mo
     country.army.readiness = clamp(round(country.army.readiness - Math.max(1, supplyUse * .2), 1), 0, 100);
   }
   return round(actualLosses, 1);
+}
+
+function frontDistanceFactor(attacker, defender) {
+  const attackerMeta = CATALOG_BY_CODE[attacker.code]; const defenderMeta = CATALOG_BY_CODE[defender.code];
+  const isNeighbor = attackerMeta.borders.includes(defender.code) || defenderMeta.borders.includes(attacker.code);
+  return isNeighbor ? 1 : attackerMeta.region === defenderMeta.region ? .88 : clamp(.68 + (attacker.army.air + attacker.army.navy) / 700, .68, .9);
+}
+
+function automaticCoalition(world, war, side) {
+  const country = world.countries[war[side]];
+  const enemy = world.countries[war[side === 'a' ? 'b' : 'a']];
+  const members = coalitionMembers(world, war, side, country, .78);
+  const offense = coalitionSummary(members, true); const defense = coalitionSummary(members, false);
+  const supplyCondition = .58 + clamp(country.army.supplies, 0, 100) / 238;
+  const moraleCondition = .72 + clamp(country.army.morale, 0, 100) / 360;
+  const distance = frontDistanceFactor(country, enemy);
+  let power = Math.sqrt(Math.max(1, offense.power) * Math.max(1, defense.power)) * supplyCondition * moraleCondition * distance;
+  if (side === 'a' && war.front > 0) power *= 1 - clamp(war.front / 430, 0, .24);
+  if (side === 'b' && war.front < 0) power *= 1 - clamp(-war.front / 430, 0, .24);
+  if (side === 'a' && war.front < 0) power *= 1 + clamp(-war.front / 620, 0, .16);
+  if (side === 'b' && war.front > 0) power *= 1 + clamp(war.front / 620, 0, .16);
+  return { country, enemy, members, offense, defense, power, distance };
+}
+
+function resolveWarTick(world, war, now = Date.now()) {
+  if (!war || war.status !== 'active' || now < (war.nextBattleAt || 0)) return null;
+  const first = world.countries[war.a]; const second = world.countries[war.b];
+  if (!first || !second) return null;
+  war.nextBattleAt = now + WAR_TICK_MS;
+  war.battleTicks = (war.battleTicks || 0) + 1;
+  const a = automaticCoalition(world, war, 'a'); const b = automaticCoalition(world, war, 'b');
+  const variation = .97 + hashFloat(`${world.seed}:live-front:${war.id}:${war.battleTicks}`) * .06;
+  const ratio = Math.max(.03, a.power * variation / Math.max(1, b.power));
+  const pressure = Math.log2(ratio);
+  let winningSide;
+  if (Math.abs(pressure) < .025) winningSide = hashFloat(`${world.seed}:stalemate:${war.id}:${war.battleTicks}`) >= .5 ? 'a' : 'b';
+  else winningSide = pressure > 0 ? 'a' : 'b';
+  const troopRatio = a.offense.troops / Math.max(.1, b.offense.troops);
+  const winner = winningSide === 'a' ? a : b; const loser = winningSide === 'a' ? b : a;
+  const winningTech = technologyBonuses(winner.country); const winningDoctrine = doctrineFor(winner.country);
+  const captureMultiplier = (1 + (winningTech.capturePct || 0)) * (winningDoctrine.capture || 1);
+  const movement = round(clamp((.14 + Math.abs(pressure) * .92 + Math.abs(Math.log2(Math.max(.05, troopRatio))) * .12) * captureMultiplier, .1, 2.25), 1);
+  const previousFront = war.front;
+  war.front = round(clamp(war.front + (winningSide === 'a' ? movement : -movement), -100, 100), 1);
+
+  const intensity = .0011 + clamp(Math.abs(pressure) * .00045, 0, .0012);
+  const aLossPool = Math.max(.02, a.offense.troops * intensity * clamp(b.power / Math.max(1, a.power), .62, 1.9));
+  const bLossPool = Math.max(.02, b.offense.troops * intensity * clamp(a.power / Math.max(1, b.power), .62, 1.9));
+  const aLosses = applyCoalitionLosses(a.members, aLossPool, .045, .11, winningSide === 'a' ? .12 : -.18, .08);
+  const bLosses = applyCoalitionLosses(b.members, bLossPool, .045, .11, winningSide === 'b' ? .12 : -.18, .08);
+  first.warExhaustion = clamp(round(first.warExhaustion + .08 + aLosses * .08, 1), 0, 100);
+  second.warExhaustion = clamp(round(second.warExhaustion + .08 + bLosses * .08, 1), 0, 100);
+  syncWarOccupation(world, war);
+
+  const attacker = winner.country; const defender = loser.country;
+  const priorHeld = winningSide === 'a' ? Math.max(0, previousFront) : Math.max(0, -previousFront);
+  const nowHeld = defender.occupation?.by === attacker.code ? defender.occupation.percent : 0;
+  const newlyCaptured = Math.max(0, nowHeld - priorHeld);
+  const loot = newlyCaptured > 0 ? round(Math.min(.8, defender.treasury, defender.treasury * newlyCaptured / 520), 1) : 0;
+  if (loot > 0) { defender.treasury = round(defender.treasury - loot, 1); attacker.treasury = round(attacker.treasury + loot, 1); }
+  first.warScore[second.code] = round(war.front, 1); second.warScore[first.code] = round(-war.front, 1);
+  war.casualties.a = round((war.casualties.a || 0) + aLosses, 1); war.casualties.b = round((war.casualties.b || 0) + bLosses, 1);
+  const battle = {
+    id: crypto.randomUUID(), automatic: true, timestamp: now, attacker: attacker.code, defender: defender.code,
+    tactic: 'live', tacticName: 'Непрерывный фронт', deployment: 78, movement, won: true, loot, turn: world.turn,
+    attackerTroops: winner.offense.troops, defenderTroops: loser.offense.troops,
+    attackerPower: round(winner.power, 1), defenderPower: round(loser.power, 1),
+    attackerLosses: winningSide === 'a' ? aLosses : bLosses, defenderLosses: winningSide === 'a' ? bLosses : aLosses,
+    attackerAllies: winner.offense.allies, defenderAllies: loser.offense.allies,
+    supplyUsed: .11, distancePenalty: round((1 - winner.distance) * 100)
+  };
+  war.lastOperation = battle;
+  war.battles.push(battle); war.battles = war.battles.slice(-16);
+  first.lastAction = `Непрерывные бои на фронте против ${CATALOG_BY_CODE[second.code].name}`;
+  second.lastAction = `Непрерывные бои на фронте против ${CATALOG_BY_CODE[first.code].name}`;
+
+  const milestone = String(Math.trunc(war.front / 10));
+  if (milestone !== war.lastReportedMilestone && Math.abs(war.front) >= 10) {
+    war.lastReportedMilestone = milestone;
+    pushNews(world, `${CATALOG_BY_CODE[attacker.code].name} продвигает живой фронт: под контролем ${Math.abs(war.front)}% территории государства ${CATALOG_BY_CODE[defender.code].name}. Потери сторон: ${war.casualties.a}/${war.casualties.b} тыс.`, 'red');
+  }
+  if (Math.abs(war.front) >= 100) {
+    const annexWinner = war.front > 0 ? first : second; const annexLoser = war.front > 0 ? second : first;
+    annexCountry(world, war, annexWinner, annexLoser);
+  }
+  const codes = new Set([war.a, war.b, ...(war.supporters?.a || []).map((item) => item.code), ...(war.supporters?.b || []).map((item) => item.code)]);
+  return { warId: war.id, countries: [...codes], ended: war.status !== 'active' };
+}
+
+function advanceWars(world, now = Date.now()) {
+  migrateWorld(world);
+  const results = [];
+  for (const war of world.wars) {
+    const result = resolveWarTick(world, war, now);
+    if (result) results.push(result);
+  }
+  if (!results.length) return { changed: false, wars: [], countries: [], ended: false };
+  calculateScores(world);
+  return {
+    changed: true,
+    wars: [...new Set(results.map((result) => result.warId))],
+    countries: [...new Set(results.flatMap((result) => result.countries))],
+    ended: results.some((result) => result.ended)
+  };
 }
 
 function resolveAttack(world, attacker, defender, deploymentValue = 60, tacticId = 'standard') {
@@ -1008,12 +1117,12 @@ function performAction(world, player, message) {
       country.atWar.push(target.code); target.atWar.push(country.code);
       changeRelation(world, country.code, target.code, -100);
       country.warScore ||= {}; target.warScore ||= {};
-      const war = { id: crypto.randomUUID(), a: country.code, b: target.code, front: occupiedFront(world, country.code, target.code), status: 'active', startedAt: world.turn, operations: 0, lastOperation: null, supporters: { a: [], b: [] }, operationsByTurn: {}, battles: [], casualties: { a: 0, b: 0 } };
+      const war = { id: crypto.randomUUID(), a: country.code, b: target.code, front: occupiedFront(world, country.code, target.code), status: 'active', startedAt: world.turn, startedAtMs: Date.now(), nextBattleAt: Date.now() + 900, battleTicks: 0, lastReportedMilestone: '', operations: 0, lastOperation: null, supporters: { a: [], b: [] }, operationsByTurn: {}, battles: [], casualties: { a: 0, b: 0 } };
       world.wars.push(war);
       syncWarOccupation(world, war);
       country.warScore[target.code] = war.front; target.warScore[country.code] = -war.front;
-      pushNews(world, `${meta.name} объявляет войну государству ${targetMeta.name}. Совет мира созывает экстренное заседание.`, 'red');
-      return { ok: true, toast: 'Состояние войны объявлено' };
+      pushNews(world, `${meta.name} объявляет войну государству ${targetMeta.name}. Армии обеих стран вступают в непрерывные бои, живой фронт начинает движение.`, 'red');
+      return { ok: true, toast: 'Война объявлена · войска сражаются автоматически' };
     }
     if (message.id === 'attack') {
       if (!country.atWar.includes(target.code)) return { ok: false, error: 'Сначала необходимо объявить войну' };
@@ -1041,10 +1150,6 @@ function botTurn(world, country) {
         joinWarSupport(world, war, side, country, candidate, supportCost(candidate));
         return;
       }
-    }
-    if (enemy && country.army.supplies >= 12 && r < .44) {
-      resolveAttack(world, country, enemy, 35 + Math.round(r * 120), r < .12 ? 'cautious' : 'standard');
-      return;
     }
     country.army.readiness = clamp(country.army.readiness + 1.5, 0, 100);
     country.army.defense = clamp(country.army.defense + .5, 0, 100);
@@ -1188,6 +1293,6 @@ function ranking(world) {
 
 module.exports = {
   CATALOG, CATALOG_BY_CODE, DEVELOPMENT_ACTIONS, MILITARY_ACTIONS, BATTLE_TACTICS, MILITARY_DOCTRINES, TECHNOLOGY_TREE, NATIONAL_PROJECTS, DECISIONS, STEALABLE_ASSETS,
-  createWorld, migrateWorld, selectCountry, performAction, advanceTurn, calculateScores,
+  createWorld, migrateWorld, selectCountry, performAction, advanceTurn, advanceWars, calculateScores,
   getRelation, incomeFor, militaryPower, ranking, clamp, technologyBonuses, theftChance
 };

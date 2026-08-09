@@ -7,7 +7,7 @@ const { WebSocketServer, WebSocket } = require('ws');
 const topojson = require('topojson-client');
 const {
   CATALOG, CATALOG_BY_CODE, DEVELOPMENT_ACTIONS, MILITARY_ACTIONS, BATTLE_TACTICS, MILITARY_DOCTRINES, TECHNOLOGY_TREE, NATIONAL_PROJECTS, DECISIONS, STEALABLE_ASSETS,
-  createWorld, migrateWorld, selectCountry, performAction, advanceTurn, calculateScores, getRelation, ranking
+  createWorld, migrateWorld, selectCountry, performAction, advanceTurn, advanceWars, calculateScores, getRelation, ranking
 } = require('./game');
 
 const PORT = Number(process.env.PORT) || 3080;
@@ -108,6 +108,17 @@ function broadcast(room) {
   for (const [playerId, socket] of room.connections) send(socket, publicState(room, playerId));
 }
 
+function broadcastWarTick(room, outcome) {
+  const payload = {
+    type: 'warTick', at: Date.now(), savedAt: room.updatedAt,
+    wars: outcome.wars.map((id) => room.world.wars.find((war) => war.id === id)).filter(Boolean),
+    countries: Object.fromEntries(outcome.countries.map((code) => [code, room.world.countries[code]]).filter(([, country]) => country)),
+    news: room.world.news,
+    ranking: ranking(room.world)
+  };
+  for (const socket of room.connections.values()) send(socket, payload);
+}
+
 function welcome(socket, room, player, resumed) {
   socket.roomCode = room.code; socket.playerId = player.id;
   const oldSocket = room.connections.get(player.id);
@@ -191,9 +202,16 @@ wss.on('connection', (socket) => {
 setInterval(() => {
   const now = Date.now();
   for (const room of rooms.values()) {
-    if (room.world.nextTurnAt <= now) { advanceTurn(room.world); saveRoom(room); broadcast(room); }
+    if (room.world.nextTurnAt <= now) { advanceTurn(room.world); saveRoom(room); broadcast(room); continue; }
+    if (!room.world.wars?.some((war) => war.status === 'active')) continue;
+    const outcome = advanceWars(room.world, now);
+    if (!outcome.changed) continue;
+    room.updatedAt = now;
+    room.warTicksSinceSave = (room.warTicksSinceSave || 0) + 1;
+    if (outcome.ended || room.warTicksSinceSave >= 5) { saveRoom(room); room.warTicksSinceSave = 0; }
+    broadcastWarTick(room, outcome);
   }
-}, 2000).unref();
+}, 500).unref();
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`WORLD ORDER запущен: http://localhost:${PORT}`);

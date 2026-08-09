@@ -14,7 +14,9 @@ const app = {
   drag: null,
   reconnectTimer: null,
   connectionTimer: null,
-  connection: null
+  connection: null,
+  visualOccupations: {},
+  warRenderStep: 0
 };
 
 const PUBLIC_GAME_URL = 'https://world-order-game.onrender.com';
@@ -130,6 +132,20 @@ function connect(connection) {
       if (message.resumed) toast('Сохранённая сессия восстановлена');
     }
     if (message.type === 'state') { app.state = message; render(); }
+    if (message.type === 'warTick' && app.state) {
+      for (const [code, state] of Object.entries(message.countries || {})) app.state.world.countries[code] = state;
+      for (const changedWar of message.wars || []) {
+        const index = app.state.world.wars.findIndex((war) => war.id === changedWar.id);
+        if (index >= 0) app.state.world.wars[index] = changedWar; else app.state.world.wars.push(changedWar);
+      }
+      app.state.world.news = message.news || app.state.world.news;
+      app.state.ranking = message.ranking || app.state.ranking;
+      app.state.savedAt = message.savedAt || app.state.savedAt;
+      renderTop(); renderMapStyles(); renderInspector(); renderNews();
+      app.warRenderStep += 1;
+      if (app.warRenderStep % 4 === 0 && ['overview','military','rating'].includes(app.activeTab)) renderPanel();
+      music.setMode(myCountry()?.atWar?.length || myCountry()?.supportingWarId ? 'war' : 'calm');
+    }
     if (message.type === 'toast') toast(message.message);
     if (message.type === 'error') {
       clearTimeout(app.connectionTimer); setEntryBusy(false);
@@ -347,51 +363,72 @@ function politicalColor(code) {
   return `hsl(${hash} 38% 42%)`;
 }
 
+function frontGeometry(box, share, source, destination) {
+  let x=box.x; let y=box.y; let width=box.width; let height=box.height; let line; let advance={x:0,y:0}; let vertical=false;
+  if (Math.abs(source[0]-destination[0])>=Math.abs(source[1]-destination[1])) {
+    vertical=true; width=Math.max(.1,box.width*share);
+    if (source[0]>destination[0]) x=box.x+box.width-width;
+    const edge=source[0]>destination[0]?x:x+width; line=[edge,box.y,edge,box.y+box.height]; advance.x=source[0]>destination[0]?-3:3;
+  } else {
+    height=Math.max(.1,box.height*share);
+    if (source[1]>destination[1]) y=box.y+box.height-height;
+    const edge=source[1]>destination[1]?y:y+height; line=[box.x,edge,box.x+box.width,edge]; advance.y=source[1]>destination[1]?-3:3;
+  }
+  return {x,y,width,height,line,vertical,advance};
+}
+
+function animateSvg(node, attribute, from, to, duration = 1.35) {
+  if (!Number.isFinite(from)||!Number.isFinite(to)||Math.abs(from-to)<.001) return;
+  const animation=document.createElementNS('http://www.w3.org/2000/svg','animate');
+  animation.setAttribute('attributeName',attribute); animation.setAttribute('from',from); animation.setAttribute('to',to); animation.setAttribute('dur',`${duration}s`); animation.setAttribute('fill','freeze'); animation.setAttribute('calcMode','spline'); animation.setAttribute('keySplines','.22 .8 .25 1');
+  node.append(animation);
+}
+
 function renderFronts() {
-  const group = $('#frontGroup');
-  if (!group || !app.pathsReady || !app.state) return;
-  group.innerHTML = '';
-  for (const target of Object.values(app.state.world.countries)) {
-    const occupation = target.occupation;
-    if (!occupation?.by || occupation.percent <= 0) continue;
-    const color = politicalColor(occupation.by);
-    const marker = document.querySelector(`.country-marker[data-code="${target.code}"]`);
-    if (marker) {
-      const ring = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-      ring.setAttribute('cx', marker.getAttribute('cx')); ring.setAttribute('cy', marker.getAttribute('cy'));
-      ring.setAttribute('r', occupation.percent >= 100 ? '3.5' : '3'); ring.setAttribute('class', 'occupation-marker');
-      ring.style.fill = color; ring.style.opacity = String(.55 + occupation.percent / 250);
-      group.append(ring); continue;
+  const group=$('#frontGroup');
+  if(!group||!app.pathsReady||!app.state)return;
+  group.innerHTML=''; const active=new Set();
+  for(const target of Object.values(app.state.world.countries)){
+    const occupation=target.occupation;
+    if(!occupation?.by||occupation.percent<=0)continue;
+    active.add(target.code); const color=politicalColor(occupation.by);
+    const previous=app.visualOccupations[target.code]; const previousPercent=previous?.by===occupation.by?previous.percent:Math.min(.1,occupation.percent);
+    app.visualOccupations[target.code]={by:occupation.by,percent:occupation.percent};
+    const marker=document.querySelector(`.country-marker[data-code="${target.code}"]`);
+    if(marker){
+      const ring=document.createElementNS('http://www.w3.org/2000/svg','circle'); ring.setAttribute('cx',marker.getAttribute('cx'));ring.setAttribute('cy',marker.getAttribute('cy'));ring.setAttribute('r',occupation.percent>=100?'3.5':'3');ring.setAttribute('class','occupation-marker');ring.style.fill=color;ring.style.opacity=String(.55+occupation.percent/250);group.append(ring);continue;
     }
-    const path = document.querySelector(`.country[data-code="${target.code}"]`);
-    if (!path) continue;
-    const box = path.getBBox(); const share = Math.max(0, Math.min(1, occupation.percent / 100));
-    const attackerMeta = catalog(occupation.by); const targetMeta = catalog(target.code);
-    const source = attackerMeta ? project([attackerMeta.latlng[1], attackerMeta.latlng[0]]) : [box.x, box.y];
-    const destination = targetMeta ? project([targetMeta.latlng[1], targetMeta.latlng[0]]) : [box.x + box.width / 2, box.y + box.height / 2];
-    let x = box.x; let y = box.y; let width = box.width; let height = box.height; let line;
-    if (Math.abs(source[0] - destination[0]) >= Math.abs(source[1] - destination[1])) {
-      width = box.width * share;
-      if (source[0] > destination[0]) x = box.x + box.width - width;
-      const edge = source[0] > destination[0] ? x : x + width;
-      line = [edge, box.y, edge, box.y + box.height];
-    } else {
-      height = box.height * share;
-      if (source[1] > destination[1]) y = box.y + box.height - height;
-      const edge = source[1] > destination[1] ? y : y + height;
-      line = [box.x, edge, box.x + box.width, edge];
-    }
-    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    rect.setAttribute('x', x); rect.setAttribute('y', y); rect.setAttribute('width', Math.max(.1, width)); rect.setAttribute('height', Math.max(.1, height));
-    rect.setAttribute('clip-path', `url(#front-clip-${target.code})`); rect.setAttribute('class', `occupation-fill${occupation.permanent ? ' permanent' : ''}`);
-    rect.style.fill = color; group.append(rect);
-    if (share < .995) {
-      const front = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-      front.setAttribute('x1', line[0]); front.setAttribute('y1', line[1]); front.setAttribute('x2', line[2]); front.setAttribute('y2', line[3]);
-      front.setAttribute('clip-path', `url(#front-clip-${target.code})`); front.setAttribute('class', 'front-line');
-      group.append(front);
+    const path=document.querySelector(`.country[data-code="${target.code}"]`); if(!path)continue;
+    const box=path.getBBox(); const share=Math.max(0,Math.min(1,occupation.percent/100)); const previousShare=Math.max(0,Math.min(1,previousPercent/100));
+    const attackerMeta=catalog(occupation.by);const targetMeta=catalog(target.code);const source=attackerMeta?project([attackerMeta.latlng[1],attackerMeta.latlng[0]]):[box.x,box.y];const destination=targetMeta?project([targetMeta.latlng[1],targetMeta.latlng[0]]):[box.x+box.width/2,box.y+box.height/2];
+    const geometry=frontGeometry(box,share,source,destination);const before=frontGeometry(box,previousShare,source,destination);const duration=occupation.permanent?.1:1.35;
+    const rect=document.createElementNS('http://www.w3.org/2000/svg','rect');
+    for(const key of ['x','y','width','height']){rect.setAttribute(key,geometry[key]);animateSvg(rect,key,before[key],geometry[key],duration);}
+    rect.setAttribute('clip-path',`url(#front-clip-${target.code})`);rect.setAttribute('class',`occupation-fill${occupation.permanent?' permanent':''}`);rect.style.fill=color;group.append(rect);
+    if(share<.995&&!occupation.permanent){
+      for(let index=0;index<9;index+=1){
+        const progress=(index+.45)/9;const wave=Math.sin((index+target.code.charCodeAt(0))*.9)*1.6;const bulge=document.createElementNS('http://www.w3.org/2000/svg','circle');
+        const cx=geometry.vertical?geometry.line[0]+geometry.advance.x*(.25+((index*7)%5)/5)+wave:geometry.line[0]+(geometry.line[2]-geometry.line[0])*progress;
+        const cy=geometry.vertical?geometry.line[1]+(geometry.line[3]-geometry.line[1])*progress:geometry.line[1]+geometry.advance.y*(.25+((index*7)%5)/5)+wave;
+        bulge.setAttribute('cx',cx);bulge.setAttribute('cy',cy);bulge.setAttribute('r',String(1.5+(index%4)*.48));bulge.setAttribute('clip-path',`url(#front-clip-${target.code})`);bulge.setAttribute('class','front-bulge');bulge.style.fill=color;group.append(bulge);
+      }
+      const front=document.createElementNS('http://www.w3.org/2000/svg','line');
+      ['x1','y1','x2','y2'].forEach((name,index)=>{front.setAttribute(name,geometry.line[index]);animateSvg(front,name,before.line[index],geometry.line[index],duration);});
+      front.setAttribute('clip-path',`url(#front-clip-${target.code})`);front.setAttribute('class','front-line');group.append(front);
+      const attackingArmy=country(occupation.by)?.army?.manpower||40;const unitCount=Math.round(Math.max(5,Math.min(16,attackingArmy/18)));
+      for(let index=0;index<unitCount;index+=1){
+        const progress=(index+.55)/unitCount;const unit=document.createElementNS('http://www.w3.org/2000/svg','circle');
+        const cx=geometry.vertical?geometry.line[0]+(index%3-1)*1.25:geometry.line[0]+(geometry.line[2]-geometry.line[0])*progress;
+        const cy=geometry.vertical?geometry.line[1]+(geometry.line[3]-geometry.line[1])*progress:geometry.line[1]+(index%3-1)*1.25;
+        const beforeCx=geometry.vertical?before.line[0]+(index%3-1)*1.25:cx;const beforeCy=geometry.vertical?cy:before.line[1]+(index%3-1)*1.25;
+        unit.setAttribute('cx',cx);unit.setAttribute('cy',cy);unit.setAttribute('r',index%4===0?'1':'0.72');unit.setAttribute('clip-path',`url(#front-clip-${target.code})`);unit.setAttribute('class','front-unit');unit.style.fill=color;unit.style.setProperty('--mx',`${geometry.advance.x}px`);unit.style.setProperty('--my',`${geometry.advance.y}px`);unit.style.animationDelay=`-${(index%7)*.13}s`;animateSvg(unit,'cx',beforeCx,cx,duration);animateSvg(unit,'cy',beforeCy,cy,duration);group.append(unit);
+      }
+      for(let index=0;index<3;index+=1){
+        const progress=(index+.7)/3;const impact=document.createElementNS('http://www.w3.org/2000/svg','circle');impact.setAttribute('cx',geometry.vertical?geometry.line[0]:geometry.line[0]+(geometry.line[2]-geometry.line[0])*progress);impact.setAttribute('cy',geometry.vertical?geometry.line[1]+(geometry.line[3]-geometry.line[1])*progress:geometry.line[1]);impact.setAttribute('r','1.1');impact.setAttribute('clip-path',`url(#front-clip-${target.code})`);impact.setAttribute('class','front-impact');impact.style.animationDelay=`-${index*.37}s`;group.append(impact);
+      }
     }
   }
+  for(const code of Object.keys(app.visualOccupations))if(!active.has(code))delete app.visualOccupations[code];
 }
 
 function renderMapStyles() {
@@ -606,12 +643,11 @@ function renderInspector() {
     const ourSupport=war?.supporters?.[side]||[]; const enemySupport=war?.supporters?.[enemySide]||[];
     const coalitionPower=(leader,support)=>Math.round((leader?.militaryPower||0)+support.reduce((sum,item)=>sum+(country(item.code)?.militaryPower||0)*(item.contribution||.45),0));
     const ourPower=coalitionPower(own,ourSupport); const theirPower=coalitionPower(c,enemySupport);
-    const operationKey=`${app.state.world.turn}:${side}`; const used=war?.operationsByTurn?.[operationKey]||0; const operationsLeft=Math.max(0,2-used);
     const allyNames=(support)=>support.map((item)=>`${catalog(item.code)?.flag||''} ${esc(catalog(item.code)?.name||item.code)} ${Math.round((item.contribution||.45)*100)}%`).join(' · ')||'нет';
-    const tactics=Object.entries(app.state.definitions.tactics||{}).map(([id,item])=>`<option value="${id}" ${item.requires&&!own.techs?.[item.requires]?'disabled':''}>${esc(item.name)}${item.requires&&!own.techs?.[item.requires]?' · нужна технология':''}</option>`).join('');
     const lastWasOurs=last?.attacker===mine; const lastOurSuccess=last ? (lastWasOurs ? last.won : !last.won) : false;
-    const battleReport=last?`<article class="battle-report ${lastOurSuccess?'victory':'defeat'}"><header><small>ПОСЛЕДНЕЕ СРАЖЕНИЕ · ${esc(last.tacticName||'операция')}</small><b>${lastOurSuccess?'ПОБЕДА':'ПОРАЖЕНИЕ'}</b></header><div class="battle-numbers"><span><small>СИЛЫ АТАКИ</small><b>${formatNumber(last.attackerPower)}</b></span><span><small>СИЛЫ ОБОРОНЫ</small><b>${formatNumber(last.defenderPower)}</b></span><span><small>ВОЙСКА</small><b>${formatNumber(last.attackerTroops,1)} / ${formatNumber(last.defenderTroops,1)} тыс.</b></span><span><small>ПОТЕРИ</small><b>${formatNumber(last.attackerLosses,1)} / ${formatNumber(last.defenderLosses,1)} тыс.</b></span></div><p>${catalog(last.attacker)?.name||last.attacker} ${last.won?'прорвал оборону':'был остановлен'} · фронт ${last.movement>0?'+':''}${last.movement}%${last.distancePenalty?` · штраф расстояния ${last.distancePenalty}%`:''}</p></article>`:'';
-    relationsHtml = `<div class="relation-box war-relation"><small>ВОЙНА · СЧЁТ КАМПАНИИ</small><b>${formatNumber(own.warScore[app.selectedCode] || 0,1)}</b><p>${frontText}</p></div><div class="front-progress ${enemyControl ? 'losing' : ''}"><i style="width:${frontValue}%"></i></div><div class="coalition-board"><div><small>НАША КОАЛИЦИЯ</small><b>${formatNumber(ourPower)} силы</b><span>${allyNames(ourSupport)}</span></div><i>VS</i><div><small>ПРОТИВНИК</small><b>${formatNumber(theirPower)} силы</b><span>${allyNames(enemySupport)}</span></div></div>${battleReport}<div class="operation-counter"><span>ОПЕРАЦИИ В ЭТОМ КВАРТАЛЕ</span><b>${operationsLeft} / 2 осталось</b></div><div class="deployment-box"><div><span>СИЛЫ В НАСТУПЛЕНИИ</span><b id="deploymentValue">60% · ${formatNumber(own.army.manpower*.6,1)} тыс.</b></div><input id="deploymentRange" type="range" min="10" max="100" step="10" value="60"><label for="tacticSelect">ТАКТИКА ОПЕРАЦИИ</label><select id="tacticSelect" class="battle-select">${tactics}</select><p id="tacticDescription"></p><div class="battle-cost"><span>Золото: <b>0</b></span><span>Снабжение: <b id="supplyCost">—</b> / ${formatNumber(own.army.supplies,1)}</span></div><p>Земля не покупается: фронт решают войска и военная сила. Союзники автоматически добавят свои экспедиционные корпуса.</p></div><div class="war-benefits"><b>ИТОГ ВОЙНЫ</b><span>Прорывы дают территорию и трофеи с поля боя. Оккупация приносит до 35% дохода захваченной земли. При 100% контроля победитель получает территорию, 45% оставшейся казны и 12% ВВП.</span></div><div class="diplomacy-actions war-actions"><button class="attack-button" data-conflict="attack" ${operationsLeft<=0||own.army.supplies<6?'disabled':''}>Вступить в сражение · без золота</button><button data-conflict="fortify" ${operationsLeft<=0||own.army.supplies<6?'disabled':''}>Укрепить фронт · 6 снабжения</button><button data-diplomacy="peace">Закрепить линию миром</button></div>`;
+    const battleReport=last?`<article class="battle-report ${lastOurSuccess?'victory':'defeat'}"><header><small>ПОСЛЕДНИЙ БОЕВОЙ ТАКТ · ${esc(last.tacticName||'живой фронт')}</small><b>${lastOurSuccess?'ПРОДВИЖЕНИЕ':'ДАВЛЕНИЕ ПРОТИВНИКА'}</b></header><div class="battle-numbers"><span><small>СИЛА НАСТУПЛЕНИЯ</small><b>${formatNumber(last.attackerPower)}</b></span><span><small>СИЛА СОПРОТИВЛЕНИЯ</small><b>${formatNumber(last.defenderPower)}</b></span><span><small>ВОЙСКА</small><b>${formatNumber(last.attackerTroops,1)} / ${formatNumber(last.defenderTroops,1)} тыс.</b></span><span><small>ПОТЕРИ ЗА ТАКТ</small><b>${formatNumber(last.attackerLosses,2)} / ${formatNumber(last.defenderLosses,2)} тыс.</b></span></div><p>${catalog(last.attacker)?.name||last.attacker} продвигает фронт на ${formatNumber(last.movement,1)}% · обновление идёт автоматически${last.distancePenalty?` · штраф расстояния ${last.distancePenalty}%`:''}</p></article>`:'';
+    const trend=last?(last.attacker===mine?`Наши части продвигаются на ${formatNumber(last.movement,1)}%`:`Противник продвигается на ${formatNumber(last.movement,1)}%`):'Армии занимают позиции';
+    relationsHtml = `<div class="relation-box war-relation"><small>ВОЙНА · ЖИВОЙ ФРОНТ</small><b>${formatNumber(own.warScore[app.selectedCode] || 0,1)}</b><p>${frontText}</p></div><div class="front-progress ${enemyControl ? 'losing' : ''}"><i style="width:${frontValue}%"></i></div><div class="live-war-status"><header><span><i></i> БОИ ИДУТ В РЕАЛЬНОМ ВРЕМЕНИ</span><b>${esc(trend)}</b></header><p>Ничего нажимать не нужно. Сервер сам сталкивает армии каждые 1,4 секунды; более сильная коалиция непрерывно закрашивает землю на карте, обе стороны теряют солдат, технику, мораль и снабжение.</p><div><span>Наши войска <b>${formatNumber(own.army.manpower,1)} тыс.</b></span><span>Снабжение <b>${formatNumber(own.army.supplies,1)}</b></span><span>Мораль <b>${formatNumber(own.army.morale,1)}</b></span></div></div><div class="coalition-board"><div><small>НАША КОАЛИЦИЯ</small><b>${formatNumber(ourPower)} силы</b><span>${allyNames(ourSupport)}</span></div><i>VS</i><div><small>ПРОТИВНИК</small><b>${formatNumber(theirPower)} силы</b><span>${allyNames(enemySupport)}</span></div></div>${battleReport}<div class="war-benefits"><b>ИТОГ ВОЙНЫ</b><span>Скорость продвижения зависит от войск, оснащения, готовности, авиации, обороны, снабжения, морали, технологий и союзников. При 100% контроля победитель получает территорию, 45% оставшейся казны и 12% ВВП.</span></div><div class="diplomacy-actions war-actions"><button data-conflict="fortify" ${own.army.supplies<6?'disabled':''}>Усилить оборону · 6 снабжения</button><button data-diplomacy="peace">Предложить мир по линии фронта</button></div>`;
   } else if (relation != null) {
     const relationBonus = myTechBonuses().relationBonus || 0;
     const blockingTreaty = own.treaties.some((treaty) => treaty === `alliance:${c.code}` || treaty === `nonaggression:${c.code}`);
