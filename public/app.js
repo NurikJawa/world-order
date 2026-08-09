@@ -1,6 +1,87 @@
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 
+const UI_PREFERENCES_KEY = 'world-order-interface:v1';
+const DEFAULT_UI_PREFERENCES = Object.freeze({ textScale: 100, leftWidth: 286, rightWidth: 390 });
+
+function clampUi(value, minimum, maximum, fallback) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.max(minimum, Math.min(maximum, numeric)) : fallback;
+}
+
+function loadUiPreferences() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(UI_PREFERENCES_KEY) || 'null') || {};
+    return {
+      textScale: clampUi(stored.textScale, 85, 150, DEFAULT_UI_PREFERENCES.textScale),
+      leftWidth: clampUi(stored.leftWidth, 250, 520, DEFAULT_UI_PREFERENCES.leftWidth),
+      rightWidth: clampUi(stored.rightWidth, 320, 640, DEFAULT_UI_PREFERENCES.rightWidth)
+    };
+  } catch {
+    return { ...DEFAULT_UI_PREFERENCES };
+  }
+}
+
+const uiPreferences = loadUiPreferences();
+
+function automaticDisplayScale() {
+  const widthRatio = window.innerWidth / 1920;
+  const heightRatio = window.innerHeight / 1080;
+  const scale = Math.min(widthRatio, heightRatio);
+  if (scale < 1.08) return 1;
+  return Math.round(Math.min(4, scale) * 100) / 100;
+}
+
+function applyInterfacePreferences(save = false) {
+  const root = document.documentElement;
+  const displayScale = automaticDisplayScale();
+  const logicalWidth = window.innerWidth / displayScale;
+  const logicalHeight = window.innerHeight / displayScale;
+  let leftWidth = uiPreferences.leftWidth;
+  let rightWidth = uiPreferences.rightWidth;
+
+  if (logicalWidth > 1150) {
+    const maximumPanels = Math.max(650, logicalWidth - 420);
+    if (leftWidth + rightWidth > maximumPanels) {
+      const ratio = maximumPanels / (leftWidth + rightWidth);
+      leftWidth = Math.max(250, Math.round(leftWidth * ratio));
+      rightWidth = Math.max(320, Math.round(rightWidth * ratio));
+    }
+  }
+
+  root.style.setProperty('--ui-text-scale', String(uiPreferences.textScale / 100));
+  root.style.setProperty('--display-scale', String(displayScale));
+  root.style.setProperty('--left-panel-width', `${leftWidth}px`);
+  root.style.setProperty('--right-panel-width', `${rightWidth}px`);
+  root.style.setProperty('--app-viewport-width', `${logicalWidth}px`);
+  root.style.setProperty('--app-viewport-height', `${logicalHeight}px`);
+  root.style.setProperty('--toast-top', `${171 * displayScale}px`);
+  root.style.setProperty('--toast-right', `${(rightWidth + 15) * displayScale}px`);
+  root.style.setProperty('--music-left', `${(leftWidth + 19) * displayScale}px`);
+  root.style.setProperty('--music-bottom', `${18 * displayScale}px`);
+  root.classList.toggle('display-scaled', displayScale > 1);
+
+  const textSlider = $('#uiTextScale');
+  if (textSlider) {
+    textSlider.value = String(uiPreferences.textScale);
+    $('#leftPanelWidth').value = String(uiPreferences.leftWidth);
+    $('#rightPanelWidth').value = String(uiPreferences.rightWidth);
+    $('#uiTextScaleValue').textContent = `${uiPreferences.textScale}%`;
+    $('#leftPanelWidthValue').textContent = `${uiPreferences.leftWidth} px`;
+    $('#rightPanelWidthValue').textContent = `${uiPreferences.rightWidth} px`;
+    const resolution = displayScale > 1
+      ? `${Math.round(displayScale * 100)}% · ${window.innerWidth} × ${window.innerHeight} → ${Math.round(logicalWidth)} × ${Math.round(logicalHeight)}`
+      : `100% · ${window.innerWidth} × ${window.innerHeight}`;
+    $('#displayScaleValue').textContent = resolution;
+  }
+
+  if (save) {
+    try { localStorage.setItem(UI_PREFERENCES_KEY, JSON.stringify(uiPreferences)); } catch { /* private browsing may disable storage */ }
+  }
+}
+
+applyInterfacePreferences();
+
 const app = {
   socket: null,
   state: null,
@@ -942,6 +1023,40 @@ $('#guideTabs').addEventListener('click', (event) => {
   $$('[data-guide-page]').forEach((page)=>page.classList.toggle('active',page.dataset.guidePage===button.dataset.guide));
 });
 
+function closeInterfaceSettings() {
+  $('#interfaceModal').classList.add('hidden');
+  $('#openInterfaceSettings').classList.remove('active');
+}
+
+$('#openInterfaceSettings').addEventListener('click', () => {
+  applyInterfacePreferences();
+  $('#interfaceModal').classList.remove('hidden');
+  $('#openInterfaceSettings').classList.add('active');
+});
+$('#closeInterfaceSettings').addEventListener('click', closeInterfaceSettings);
+$('#interfaceModal').addEventListener('click', (event) => {
+  if (event.target.closest('[data-close-interface]')) closeInterfaceSettings();
+});
+
+for (const [id, property] of [['uiTextScale', 'textScale'], ['leftPanelWidth', 'leftWidth'], ['rightPanelWidth', 'rightWidth']]) {
+  $(`#${id}`).addEventListener('input', (event) => {
+    uiPreferences[property] = Number(event.target.value);
+    applyInterfacePreferences(true);
+  });
+}
+
+$('#resetInterfaceSettings').addEventListener('click', () => {
+  Object.assign(uiPreferences, DEFAULT_UI_PREFERENCES);
+  applyInterfacePreferences(true);
+  toast('Личный интерфейс возвращён к стандартному виду');
+});
+
+let interfaceResizeFrame = 0;
+window.addEventListener('resize', () => {
+  cancelAnimationFrame(interfaceResizeFrame);
+  interfaceResizeFrame = requestAnimationFrame(() => applyInterfacePreferences());
+});
+
 class MusicEngine {
   constructor() { this.context = null; this.master = null; this.compressor = null; this.timer = null; this.enabled = false; this.mode = 'calm'; this.step = 0; this.volume = .3; }
   async start() {
@@ -1058,5 +1173,5 @@ setInterval(() => {
 }, 1000);
 
 window.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') { $('#inspector').classList.remove('open'); $('#controlPanel').classList.remove('open'); $('#techModal').classList.add('hidden'); closeGuide(); }
+  if (event.key === 'Escape') { $('#inspector').classList.remove('open'); $('#controlPanel').classList.remove('open'); $('#techModal').classList.add('hidden'); closeGuide(); closeInterfaceSettings(); }
 });

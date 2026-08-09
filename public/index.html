@@ -50,6 +50,7 @@
         </div>
       </div>
       <div class="top-actions">
+        <button id="openInterfaceSettings" class="interface-button" title="Размер текста и панелей"><span>Aa</span><small>ИНТЕРФЕЙС</small></button>
         <button id="openGuide" class="guide-button" title="Открыть энциклопедию"><span>?</span><small>ГАЙД</small></button>
         <button id="openTechTree" class="tech-top-button"><span>⌬</span><div><small>ОСОБОЕ РАЗВИТИЕ</small><b>ДРЕВО ДЕРЖАВЫ</b></div><em id="techPointBadge">0</em></button>
         <button id="musicToggle" class="sound-button" title="Включить музыку"><span>♪</span><small>МУЗЫКА</small></button>
@@ -142,6 +143,27 @@
     </section>
   </div>
 
+  <div id="interfaceModal" class="modal interface-modal hidden">
+    <div class="modal-backdrop" data-close-interface></div>
+    <section class="interface-card" role="dialog" aria-modal="true" aria-labelledby="interfaceTitle">
+      <header>
+        <div><small>ЛИЧНЫЙ ВИД · ТОЛЬКО НА ЭТОМ УСТРОЙСТВЕ</small><h2 id="interfaceTitle">Настройка интерфейса</h2></div>
+        <button id="closeInterfaceSettings" aria-label="Закрыть настройки">×</button>
+      </header>
+      <p class="interface-intro">Настройте игру под свой монитор и зрение. Другие участники комнаты этих изменений не увидят.</p>
+      <div class="resolution-status"><span>◫</span><div><small>АВТОМАТИЧЕСКИЙ МАСШТАБ МОНИТОРА</small><b id="displayScaleValue">100% · Full HD</b><p>На 2K, 4K и 5K интерфейс автоматически сохраняет привычный физический размер.</p></div></div>
+      <div class="interface-controls">
+        <label for="uiTextScale"><span><b>Размер текста</b><small>Все основные панели, новости и справочник</small></span><output id="uiTextScaleValue">100%</output></label>
+        <input id="uiTextScale" type="range" min="85" max="150" step="5" value="100">
+        <label for="leftPanelWidth"><span><b>Левая панель</b><small>Держава, развитие, армия и дипломатия</small></span><output id="leftPanelWidthValue">286 px</output></label>
+        <input id="leftPanelWidth" type="range" min="250" max="520" step="10" value="286">
+        <label for="rightPanelWidth"><span><b>Правая панель</b><small>Выбранная страна и мировые новости</small></span><output id="rightPanelWidthValue">390 px</output></label>
+        <input id="rightPanelWidth" type="range" min="320" max="640" step="10" value="390">
+      </div>
+      <footer><button id="resetInterfaceSettings">СБРОСИТЬ НАСТРОЙКИ</button><span>Изменения сохраняются автоматически</span></footer>
+    </section>
+  </div>
+
   <div id="techModal" class="tech-modal hidden">
     <div class="tech-aurora one"></div><div class="tech-aurora two"></div>
     <header class="tech-header">
@@ -210,7 +232,7 @@
         </article>
         <article data-guide-page="multiplayer">
           <div class="guide-hero"><span>06</span><div><small>ОДИН МИР ДЛЯ ДРУЗЕЙ</small><h3>Код комнаты, серверные сохранения и живая синхронизация</h3><p>Создатель копирует шестизначный код сверху. Друг вводит имя и код на стартовом экране. Вы видите один и тот же фронт, решения и мировую ленту.</p></div></div>
-          <div class="guide-grid"><section><b>Двойное сохранение</b><p>Мир записывается на сервер и резервно в браузер каждого игрока. Если Render перезапустился, первый вернувшийся участник автоматически восстановит комнату с тем же кодом.</p></section><section><b>Занятые страны</b><p>Одну страну может выбрать только один игрок, и сменить её в этой партии нельзя. После восстановления личный ключ устройства возвращает каждому именно его страну.</p></section><section><b>Пресса игроков</b><p>Во вкладке «От игроков» можно выпустить новость от имени своей страны. Заголовок попадёт в верхнюю строку, а полный текст увидят все участники. Между публикациями действует пауза 30 секунд.</p></section><section><b>Обновления войны</b><p>Сервер отправляет лёгкие изменения фронта вместо полной карты. Резервный снимок записывается не чаще раза в 6 секунд, поэтому не вызывает лагов на каждом боевом такте.</p></section><section><b>Музыка</b><p>Браузер разрешает звук после первого нажатия. В мирное время играет спокойная тема, при войне музыка автоматически становится напряжённой.</p></section></div>
+          <div class="guide-grid"><section><b>Двойное сохранение</b><p>Мир записывается на сервер и резервно в браузер каждого игрока. Если Render перезапустился, первый вернувшийся участник автоматически восстановит комнату с тем же кодом.</p></section><section><b>Занятые страны</b><p>Одну страну может выбрать только один игрок, и сменить её в этой партии нельзя. После восстановления личный ключ устройства возвращает каждому именно его страну.</p></section><section><b>Пресса игроков</b><p>Во вкладке «От игроков» можно выпустить новость от имени своей страны. Заголовок попадёт в верхнюю строку, а полный текст увидят все участники. Между публикациями действует пауза 30 секунд.</p></section><section><b>Обновления войны</b><p>Сервер отправляет лёгкие изменения фронта вместо полной карты. Резервный снимок записывается не чаще раза в 6 секунд, поэтому не вызывает лагов на каждом боевом такте.</p></section><section><b>Личный интерфейс</b><p>Кнопка «Aa» сверху меняет размер текста и ширину обеих боковых панелей только у вас. Выбор сохраняется в браузере, а высокое разрешение монитора определяется автоматически.</p></section><section><b>Музыка</b><p>Браузер разрешает звук после первого нажатия. В мирное время играет спокойная тема, при войне музыка автоматически становится напряжённой.</p></section></div>
         </article>
       </div>
     </section>
