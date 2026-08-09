@@ -13,8 +13,12 @@ const app = {
   transform: { x: 0, y: 0, k: 1 },
   drag: null,
   reconnectTimer: null,
+  connectionTimer: null,
   connection: null
 };
+
+const PUBLIC_GAME_URL = 'https://world-order-game.onrender.com';
+const isLocalGame = ['127.0.0.1', 'localhost', '0.0.0.0'].includes(location.hostname);
 
 function esc(value) {
   return String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
@@ -85,14 +89,31 @@ function setConnected(connected) {
   status.lastChild.textContent = connected ? ' В СЕТИ' : ' НЕТ СВЯЗИ';
 }
 
+function setEntryBusy(busy, action = 'join') {
+  $('#createRoom').disabled = busy;
+  $('#joinRoom').disabled = busy;
+  $('#playerName').disabled = busy;
+  $('#roomCode').disabled = busy;
+  $('#createRoom').innerHTML = busy && action === 'create' ? '<span>Создаём общий мир…</span><b>◌</b>' : '<span>Создать новый мир</span><b>→</b>';
+  $('#joinRoom').textContent = busy && action === 'join' ? 'Входим…' : 'Войти';
+}
+
 function connect(connection) {
   app.connection = connection;
   clearTimeout(app.reconnectTimer);
+  clearTimeout(app.connectionTimer);
   if (app.socket && app.socket.readyState < 2) app.socket.close();
+  if (!$('#landing').classList.contains('hidden')) setEntryBusy(true, connection.action);
   const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
   const socket = new WebSocket(`${protocol}://${location.host}`);
   app.socket = socket;
   setConnected(false);
+  app.connectionTimer = setTimeout(() => {
+    if (socket !== app.socket || $('#landing').classList.contains('hidden')) return;
+    $('#landingError').textContent = 'Сервер не ответил за 20 секунд. Обновите страницу и попробуйте ещё раз.';
+    setEntryBusy(false);
+    socket.close();
+  }, 20000);
   socket.addEventListener('open', () => {
     const knownRoom = connection.roomCode?.toUpperCase();
     const token = knownRoom ? localStorage.getItem(`world-order:${knownRoom}`) : null;
@@ -102,6 +123,7 @@ function connect(connection) {
   socket.addEventListener('message', ({ data }) => {
     const message = JSON.parse(data);
     if (message.type === 'welcome') {
+      clearTimeout(app.connectionTimer); setEntryBusy(false);
       localStorage.setItem(`world-order:${message.roomCode}`, message.playerToken);
       app.connection = { action: 'join', roomCode: message.roomCode, name: $('#playerName').value.trim() };
       showGame();
@@ -110,12 +132,17 @@ function connect(connection) {
     if (message.type === 'state') { app.state = message; render(); }
     if (message.type === 'toast') toast(message.message);
     if (message.type === 'error') {
+      clearTimeout(app.connectionTimer); setEntryBusy(false);
       $('#landingError').textContent = message.message;
       toast(message.message, true);
     }
   });
   socket.addEventListener('close', (event) => {
     setConnected(false);
+    if (!$('#landing').classList.contains('hidden') && socket === app.socket) {
+      clearTimeout(app.connectionTimer); setEntryBusy(false);
+      if (!$('#landingError').textContent) $('#landingError').textContent = 'Соединение не установлено. Проверьте интернет и адрес сайта.';
+    }
     if (event.code !== 4001 && !$('#game').classList.contains('hidden')) {
       app.reconnectTimer = setTimeout(() => connect(app.connection), 1800);
     }
@@ -147,7 +174,12 @@ $('#roomCode').addEventListener('input', (event) => { event.target.value = event
 $('#roomCode').addEventListener('keydown', (event) => { if (event.key === 'Enter') $('#joinRoom').click(); });
 $('#copyRoom').addEventListener('click', async () => {
   if (!app.state) return;
-  try { await navigator.clipboard.writeText(app.state.roomCode); toast('Код мира скопирован'); }
+  if (isLocalGame) {
+    toast('Это локальная комната: друг из интернета её не увидит. Создайте мир на world-order-game.onrender.com', true);
+    return;
+  }
+  const invite = new URL(location.origin); invite.searchParams.set('room', app.state.roomCode);
+  try { await navigator.clipboard.writeText(invite.toString()); toast('Ссылка-приглашение скопирована'); }
   catch { toast(`Код мира: ${app.state.roomCode}`); }
 });
 $('#mobileMenu').addEventListener('click', () => $('#controlPanel').classList.toggle('open'));
@@ -160,6 +192,16 @@ async function loadMap() {
   } catch { toast('Не удалось загрузить географию карты', true); }
 }
 loadMap();
+
+const invitedRoom = new URLSearchParams(location.search).get('room')?.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+if (invitedRoom?.length === 6) {
+  $('#roomCode').value = invitedRoom;
+  $('#landingError').textContent = `Получено приглашение в мир ${invitedRoom}. Введите имя и нажмите «Войти».`;
+}
+if (isLocalGame) {
+  $('.entry-note').innerHTML = `⚠ Открыта локальная версия. Игроки из интернета сюда не войдут. Для мультиплеера используйте <a href="${PUBLIC_GAME_URL}">${PUBLIC_GAME_URL.replace('https://','')}</a>.`;
+  $('.entry-note').classList.add('local-warning');
+}
 
 function project(coordinates) {
   const [lon, lat] = coordinates;
