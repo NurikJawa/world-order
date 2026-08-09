@@ -438,3 +438,123 @@ test('a failed theft pays the target a fine and damages reputation and relations
   assert.equal(scenario.attacker.reputation, scenario.reputation - 10);
   assert.equal(getRelation(scenario.world, 'KAZ', 'UZB'), scenario.relation - 18);
 });
+
+test('new worlds contain strategic resources, factions, formations and a victory path', () => {
+  const world = createWorld('grand-strategy-model');
+  const country = world.countries.KAZ;
+  assert.deepEqual(Object.keys(country.resources).sort(), ['energy','food','fuel','metals','rare']);
+  assert.ok(country.resourceProduction.fuel > 0);
+  assert.ok(country.factions.people > 0);
+  assert.ok(country.units.infantry > 0);
+  assert.ok(country.victoryPath);
+  assert.deepEqual(world.alliances, []);
+  assert.deepEqual(world.tradeRoutes, []);
+});
+
+test('internal politics creates tradeoffs and is limited to one reform per quarter', () => {
+  const world = createWorld('internal-politics');
+  const player = { id: 'p1', name: 'Реформатор', countryCode: null };
+  selectCountry(world, player, 'KAZ');
+  const country = world.countries.KAZ; country.treasury = 200;
+  const people = country.factions.people; const business = country.factions.business;
+  assert.equal(performAction(world, player, { action: 'internal_policy', id: 'people' }).ok, true);
+  assert.ok(Math.abs(country.factions.people - (people + 10)) < .01);
+  assert.ok(Math.abs(country.factions.business - (business - 3)) < .01);
+  assert.equal(performAction(world, player, { action: 'internal_policy', id: 'anti_corruption' }).ok, false);
+});
+
+test('specialized unit programs consume both money and physical resources', () => {
+  const world = createWorld('unit-programs');
+  const player = { id: 'p1', name: 'Главком', countryCode: null };
+  selectCountry(world, player, 'KAZ');
+  const country = world.countries.KAZ; country.treasury = 200; country.resources.fuel = 30; country.resources.metals = 30;
+  const armor = country.units.armor;
+  assert.equal(performAction(world, player, { action: 'unit_program', id: 'armor' }).ok, true);
+  assert.equal(country.units.armor, armor + 6);
+  assert.equal(country.resources.fuel, 23);
+  assert.equal(country.resources.metals, 22);
+});
+
+test('a world crisis appears on schedule and accepts one national response', () => {
+  const world = createWorld('crisis-cycle');
+  const player = { id: 'p1', name: 'Премьер', countryCode: null };
+  selectCountry(world, player, 'KAZ');
+  world.countries.KAZ.treasury = 500;
+  while (world.turn < 5) advanceTurn(world);
+  assert.ok(world.globalCrisis);
+  const definition = require('../game').GLOBAL_CRISES.find((item) => item.id === world.globalCrisis.id);
+  const affordable = definition.options.find((option) => !option.cost || world.countries.KAZ.treasury >= option.cost);
+  assert.equal(performAction(world, player, { action: 'crisis_response', id: affordable.id }).ok, true);
+  assert.equal(performAction(world, player, { action: 'crisis_response', id: affordable.id }).ok, false);
+});
+
+test('resource trade with a bot creates a route that delivers every quarter', () => {
+  const world = createWorld('resource-trade');
+  const player = { id: 'p1', name: 'Торговец', countryCode: null };
+  selectCountry(world, player, 'KAZ');
+  const buyer = world.countries.KAZ; const seller = world.countries.RUS;
+  buyer.treasury = 500; seller.resourceProduction.fuel = 10; seller.resources.fuel = 100;
+  world.relations['KAZ:RUS'] = 60;
+  assert.equal(performAction(world, player, { action: 'trade_route', id: 'propose', resource: 'fuel', target: 'RUS' }).ok, true);
+  assert.equal(world.tradeRoutes.length, 1);
+  const before = buyer.resources.fuel;
+  advanceTurn(world);
+  assert.ok(buyer.resources.fuel > before);
+  assert.equal(world.tradeRoutes[0].lastDeliveryTurn, world.turn);
+  assert.equal(performAction(world, player, { action: 'trade_route', id: 'cancel', routeId: world.tradeRoutes[0].id }).ok, true);
+  assert.equal(world.tradeRoutes[0].status, 'closed');
+});
+
+test('a player can found a named bloc and invite a friendly bot', () => {
+  const world = createWorld('international-bloc');
+  const player = { id: 'p1', name: 'Дипломат', countryCode: null };
+  selectCountry(world, player, 'KAZ');
+  const country = world.countries.KAZ; country.treasury = 300; world.relations['KAZ:UZB'] = 70;
+  assert.equal(performAction(world, player, { action: 'alliance_bloc', id: 'create', name: 'Союз Великой степи' }).ok, true);
+  assert.equal(world.alliances[0].name, 'Союз Великой степи');
+  assert.equal(performAction(world, player, { action: 'alliance_bloc', id: 'invite', target: 'UZB' }).ok, true);
+  assert.ok(world.alliances[0].members.includes('UZB'));
+  assert.equal(world.countries.UZB.allianceId, world.alliances[0].id);
+  assert.equal(performAction(world, player, { action: 'alliance_bloc', id: 'kick', target: 'UZB' }).ok, true);
+  assert.equal(world.countries.UZB.allianceId, null);
+  assert.equal(world.alliances[0].members.includes('UZB'), false);
+});
+
+test('advanced megaprojects enforce geographic and development requirements', () => {
+  const world = createWorld('megaproject-requirements');
+  const player = { id: 'p1', name: 'Архитектор', countryCode: null };
+  selectCountry(world, player, 'KAZ');
+  world.countries.KAZ.treasury = 500;
+  const result = performAction(world, player, { action: 'project', id: 'global_port' });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /морю/);
+});
+
+test('strategic intelligence produces a report and enforces one operation per turn', () => {
+  let successful;
+  for (let index = 0; index < 50 && !successful; index += 1) {
+    const world = createWorld(`strategic-intel-${index}`);
+    const player = { id: 'p1', name: 'Разведчик', countryCode: null };
+    selectCountry(world, player, 'KAZ');
+    const country = world.countries.KAZ; country.treasury = 300; country.cyber = 100;
+    const target = world.countries.UZB; target.cyber = 0; target.police = 0;
+    const result = performAction(world, player, { action: 'intelligence', id: 'recon', target: 'UZB' });
+    if (country.intelligenceReports.length) successful = { world, player, country, result };
+  }
+  assert.ok(successful);
+  assert.match(successful.country.intelligenceReports[0].report, /Армия/);
+  assert.equal(performAction(successful.world, successful.player, { action: 'intelligence', id: 'sabotage', target: 'UZB' }).ok, false);
+});
+
+test('completing a non-military victory path records the country in the hall of fame', () => {
+  const world = createWorld('peace-victory');
+  const player = { id: 'p1', name: 'Миротворец', countryCode: null };
+  selectCountry(world, player, 'KAZ');
+  const country = world.countries.KAZ;
+  country.victoryPath = 'peace'; country.stability = 100; country.happiness = 100;
+  country.treaties = ['trade:UZB','trade:KGZ','trade:RUS','nonaggression:CHN','alliance:TUR'];
+  advanceTurn(world);
+  assert.equal(country.victoryAchieved, true);
+  assert.equal(world.hallOfFame[0].code, 'KAZ');
+  assert.equal(world.hallOfFame[0].path, 'peace');
+});

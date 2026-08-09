@@ -81,6 +81,14 @@ const WAR_WEATHER = {
   snow: { name: 'Снегопад', icon: '❄', power: .92, capture: .76, supply: 1.18 },
   storm: { name: 'Штормовой фронт', icon: 'ϟ', power: .86, capture: .58, supply: 1.3 }
 };
+const WAR_TERRAINS = {
+  plains: { name: 'равнины и степи', icon: '≈', attack: 1.04, defense: .96, capture: 1.1, supply: .95 },
+  mountains: { name: 'горная местность', icon: '▲', attack: .83, defense: 1.2, capture: .7, supply: 1.25 },
+  desert: { name: 'пустыня', icon: '◇', attack: .91, defense: 1.02, capture: .84, supply: 1.3 },
+  jungle: { name: 'джунгли', icon: '♣', attack: .86, defense: 1.13, capture: .72, supply: 1.22 },
+  arctic: { name: 'арктическая зона', icon: '❄', attack: .82, defense: 1.1, capture: .66, supply: 1.32 },
+  coast: { name: 'прибрежный театр', icon: '≈', attack: .96, defense: 1.05, capture: .94, supply: 1.05 }
+};
 const PLAYER_NEWS_COOLDOWN_MS = 30000;
 const PLAYER_NEWS_CATEGORIES = {
   politics: { name: 'Политика', icon: '◎', tone: 'blue' },
@@ -182,7 +190,11 @@ const NATIONAL_PROJECTS = {
   health_nation: { name: 'Здоровая нация', icon: '✚', cost: 84, duration: 3, description: 'Новые клиники, профилактика и биомедицинские центры.', rewards: { healthcare: 10, happiness: 5, stability: 2 } },
   smart_cities: { name: 'Умные города', icon: '▦', cost: 104, duration: 4, description: 'Цифровое управление крупнейшими агломерациями.', rewards: { cyber: 9, infrastructure: 6, gdpPct: .02 } },
   defense_complex: { name: 'Оборонно-промышленный комплекс', icon: '⬡', cost: 124, duration: 4, description: 'Собственное производство техники и систем защиты.', rewards: { industry: 5, equipment: 9, defense: 6 } },
-  green_transition: { name: 'Зелёный переход', icon: '❋', cost: 96, duration: 4, description: 'Возобновляемая энергетика и восстановление экосистем.', rewards: { energy: 9, happiness: 4, influence: 3 } }
+  green_transition: { name: 'Зелёный переход', icon: '❋', cost: 96, duration: 4, description: 'Возобновляемая энергетика и восстановление экосистем.', rewards: { energy: 9, happiness: 4, influence: 3 } },
+  nuclear_program: { name: 'Стратегическая ядерная программа', icon: '☢', cost: 188, duration: 6, description: 'Создаёт дорогое стратегическое сдерживание и резко повышает международное влияние.', requirements: { science: 60, energy: 60 }, rewards: { science: 7, influence: 14, defense: 10 } },
+  global_port: { name: 'Глобальный торговый порт', icon: '⚓', cost: 138, duration: 5, description: 'Узел морских маршрутов, складов и международной торговли.', requirements: { infrastructure: 55, coastal: true }, rewards: { infrastructure: 8, industry: 5, gdpPct: .055 } },
+  orbital_constellation: { name: 'Орбитальная группировка', icon: '◉', cost: 174, duration: 6, description: 'Спутники разведки, навигации и защищённой связи для экономики и армии.', requirements: { science: 65, cyber: 55 }, rewards: { cyber: 10, science: 8, influence: 7 } },
+  sovereign_ai: { name: 'Суверенный искусственный интеллект', icon: '◇', cost: 166, duration: 5, description: 'Автоматизирует промышленность, управление и стратегическое планирование.', requirements: { science: 70, cyber: 65 }, rewards: { cyber: 8, science: 9, industry: 7, stability: 3 } }
 };
 
 const DECISIONS = [
@@ -212,6 +224,74 @@ const DECISIONS = [
   ] }
 ];
 
+const STRATEGIC_RESOURCES = {
+  food: { name: 'Продовольствие', icon: '❋', price: 4, description: 'Поддерживает население и устойчивость во время кризисов.' },
+  fuel: { name: 'Топливо', icon: '◆', price: 7, description: 'Нужно бронетехнике, авиации и непрерывному фронту.' },
+  metals: { name: 'Металлы', icon: '⬡', price: 6, description: 'Расходуются на тяжёлую технику и мегапроекты.' },
+  rare: { name: 'Редкие материалы', icon: '◇', price: 9, description: 'Основа электроники, ПВО и высоких технологий.' },
+  energy: { name: 'Энергия', icon: 'ϟ', price: 5, description: 'Питает промышленность, города и цифровую инфраструктуру.' }
+};
+
+const POLITICAL_FACTIONS = {
+  people: { name: 'Граждане', icon: '◉', description: 'Хотят доступных услуг, низких налогов и мира.' },
+  business: { name: 'Бизнес', icon: '◆', description: 'Требует торговли, инфраструктуры и предсказуемых правил.' },
+  military: { name: 'Военные', icon: '✦', description: 'Ценят готовность армии, снабжение и сильную оборону.' },
+  elites: { name: 'Элиты', icon: '♛', description: 'Поддерживают стабильность, но сопротивляются антикоррупционным реформам.' },
+  opposition: { name: 'Оппозиция', icon: '◎', description: 'Растёт при бедности, поражениях, цензуре и низком доверии.' }
+};
+
+const ADVISORS = {
+  reformer: { name: 'Анна Мирова', role: 'Реформатор', icon: '◎', cost: 34, effects: 'Оппозиция растёт медленнее, стабильность +0,3/ход', bonuses: { stabilityPerTurn: .3, oppositionControl: .25 } },
+  economist: { name: 'Дамир Садыков', role: 'Экономист', icon: '◆', cost: 42, effects: '+8% государственный доход, выгоднее торговля', bonuses: { incomePct: .08, tradeIncome: 1 } },
+  general: { name: 'Мария Волкова', role: 'Генерал', icon: '✦', cost: 46, effects: '+8% сила армии, −8% военные потери', bonuses: { combatPct: .08, casualtyReduction: .08 } },
+  diplomat: { name: 'Леон Арден', role: 'Дипломат', icon: '♜', cost: 38, effects: '+3 к дипломатическим действиям, +0,25 влияния/ход', bonuses: { relationBonus: 3, influencePerTurn: .25 } },
+  spymaster: { name: 'София Норд', role: 'Глава разведки', icon: '⌁', cost: 44, effects: '+14% успех операций, лучше контрразведка', bonuses: { intelPct: .14, counterIntel: 10 } }
+};
+
+const UNIT_PROGRAMS = {
+  infantry: { name: 'Механизированная пехота', icon: '♟', cost: 28, resources: { food: 4, metals: 3 }, gain: 8, description: 'Удерживает землю и снижает риск быстрого отката фронта.' },
+  armor: { name: 'Бронетанковые корпуса', icon: '▰', cost: 42, resources: { fuel: 7, metals: 8 }, gain: 6, description: 'Усиливает прорыв, но постоянно требует топлива.' },
+  airWings: { name: 'Тактическая авиация', icon: '▲', cost: 48, resources: { fuel: 8, rare: 5 }, gain: 5, description: 'Подавляет снабжение и ускоряет наступление.' },
+  airDefense: { name: 'Эшелонированная ПВО', icon: '⬡', cost: 39, resources: { metals: 5, rare: 5 }, gain: 6, description: 'Снижает преимущество чужой авиации и защищает города.' },
+  fleet: { name: 'Экспедиционный флот', icon: '≈', cost: 52, resources: { fuel: 9, metals: 8 }, gain: 5, naval: true, description: 'Усиливает блокаду портов и дальние операции.' }
+};
+
+const GLOBAL_CRISES = [
+  { id: 'oil_shock', name: 'Мировой топливный шок', icon: '◆', description: 'Поставки нефти сорваны, армия и промышленность требуют срочных резервов.', duration: 3, modifiers: { fuelUse: 1.35, incomePct: -.05 }, options: [
+    { id: 'reserves', label: 'Открыть стратегические резервы', note: '−12 топлива · стабильность +4', resources: { fuel: -12 }, effects: { stability: 4 } },
+    { id: 'rationing', label: 'Ввести нормирование', note: 'счастье −4 · энергия +6', effects: { happiness: -4 }, resources: { energy: 6 } },
+    { id: 'market', label: 'Субсидировать импорт', note: '−24 млрд · влияние +2', cost: 24, effects: { influence: 2 } }
+  ] },
+  { id: 'food_crisis', name: 'Глобальный продовольственный кризис', icon: '❋', description: 'Неурожай поднимает цены и усиливает протестные настроения.', duration: 3, modifiers: { foodUse: 1.4, happinessPerTurn: -1.2 }, options: [
+    { id: 'stockpile', label: 'Раздать государственные запасы', note: '−14 продовольствия · счастье +6', resources: { food: -14 }, effects: { happiness: 6 } },
+    { id: 'farmers', label: 'Поддержать фермеров', note: '−20 млрд · производство еды +2', cost: 20, production: { food: 2 } },
+    { id: 'borders', label: 'Ограничить экспорт', note: 'стабильность +3 · репутация −4', effects: { stability: 3, reputation: -4 } }
+  ] },
+  { id: 'financial_crash', name: 'Мировой финансовый обвал', icon: '◇', description: 'Рынки падают, банки замораживают кредитование крупных проектов.', duration: 3, modifiers: { incomePct: -.12, projectSpeed: -.25 }, options: [
+    { id: 'banks', label: 'Спасти системные банки', note: '−32 млрд · стабильность +6', cost: 32, effects: { stability: 6 } },
+    { id: 'stimulus', label: 'Запустить инфраструктурный стимул', note: '−25 млрд · индустрия +3', cost: 25, effects: { industry: 3 } },
+    { id: 'default', label: 'Не вмешиваться', note: 'казна сохранена · счастье −5', effects: { happiness: -5 } }
+  ] },
+  { id: 'pandemic', name: 'Новая пандемия', icon: '✚', description: 'Система здравоохранения перегружена, границы и торговля замедляются.', duration: 4, modifiers: { incomePct: -.07, happinessPerTurn: -.7 }, options: [
+    { id: 'medicine', label: 'Массовая медицинская программа', note: '−28 млрд · здоровье +5', cost: 28, effects: { healthcare: 5 } },
+    { id: 'lockdown', label: 'Жёсткий карантин', note: 'стабильность +3 · счастье −5', effects: { stability: 3, happiness: -5 } },
+    { id: 'open', label: 'Сохранить открытые границы', note: 'ВВП сохранён · стабильность −5', effects: { stability: -5 } }
+  ] },
+  { id: 'cyber_blackout', name: 'Международный киберблэкаут', icon: '⌁', description: 'Вредоносная сеть атакует энергетику, банки и военную связь.', duration: 3, modifiers: { cyberPenalty: .12, energyUse: 1.25 }, options: [
+    { id: 'shield', label: 'Изолировать государственные сети', note: '−18 млрд · киберзащита +4', cost: 18, effects: { cyber: 4 } },
+    { id: 'allies', label: 'Общий центр с союзниками', note: '−3 редких материала · влияние +4', resources: { rare: -3 }, effects: { influence: 4 } },
+    { id: 'counter', label: 'Ответная кибероперация', note: 'киберпотенциал +2 · репутация −2', effects: { cyber: 2, reputation: -2 } }
+  ] }
+];
+
+const VICTORY_PATHS = {
+  economy: { name: 'Экономическая сверхдержава', icon: '◆', description: 'Достигните ВВП 2500 млрд, дохода 55 млрд и четырёх торговых маршрутов.' },
+  science: { name: 'Научное лидерство', icon: '⌬', description: 'Изучите 12 технологий и завершите три мегапроекта.' },
+  diplomacy: { name: 'Архитектор мира', icon: '◎', description: 'Наберите 82 влияния, возглавьте блок из четырёх стран и сохраните репутацию 65.' },
+  military: { name: 'Военная гегемония', icon: '✦', description: 'Достигните военной силы 300 и контролируйте чужую территорию.' },
+  peace: { name: 'Миротворческая держава', icon: '❋', description: 'Добейтесь стабильности и счастья 82, пяти договоров и ни одной активной войны.' }
+};
+
 function technologyBonuses(country) {
   const result = {};
   for (const [id, unlocked] of Object.entries(country.techs || {})) {
@@ -228,6 +308,52 @@ function hashFloat(text) {
 
 function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
 function round(value, digits = 0) { const p = 10 ** digits; return Math.round(value * p) / p; }
+
+function advisorBonuses(country) {
+  const result = {};
+  for (const id of Object.values(country.advisors || {})) {
+    for (const [key, value] of Object.entries(ADVISORS[id]?.bonuses || {})) result[key] = (result[key] || 0) + value;
+  }
+  return result;
+}
+
+function initialStrategicEconomy(meta, seed, development) {
+  const area = clamp(Math.log10((meta.area || 1) + 10), 1, 7);
+  const latitude = Math.abs(meta.latlng?.[0] || 0);
+  const roll = (id) => hashFloat(`${seed}:resource:${meta.code}:${id}`);
+  const fuelPowers = new Set(['SAU','RUS','USA','CAN','IRN','IRQ','ARE','QAT','KWT','VEN','NGA','NOR','KAZ','AZE','DZA','LBY']);
+  const farmPowers = new Set(['USA','CAN','BRA','ARG','UKR','RUS','IND','CHN','FRA','AUS','KAZ']);
+  const rarePowers = new Set(['CHN','COD','AUS','BRA','RUS','ZAF','CAN','CHL','BOL','KAZ','MNG']);
+  const production = {
+    food: round(clamp(2 + area * .55 + roll('food') * 4 + (farmPowers.has(meta.code) ? 4 : 0) - Math.max(0, latitude - 55) * .04, 1, 13), 1),
+    fuel: round(clamp(1 + area * .35 + roll('fuel') * 3 + (fuelPowers.has(meta.code) ? 7 : 0), .5, 14), 1),
+    metals: round(clamp(1 + area * .5 + roll('metals') * 4, 1, 11), 1),
+    rare: round(clamp(.4 + area * .2 + roll('rare') * 2 + (rarePowers.has(meta.code) ? 4 : 0), .3, 8), 1),
+    energy: round(clamp(2 + development / 15 + roll('energy') * 3, 2, 12), 1)
+  };
+  const stock = Object.fromEntries(Object.keys(STRATEGIC_RESOURCES).map((id) => [id, round(18 + production[id] * 2.8, 1)]));
+  return { production, stock };
+}
+
+function spendResources(country, costs = {}) {
+  for (const [id, amount] of Object.entries(costs)) if ((country.resources?.[id] || 0) < amount) return false;
+  for (const [id, amount] of Object.entries(costs)) country.resources[id] = round(country.resources[id] - amount, 1);
+  return true;
+}
+
+function strategicGoalProgress(world, country) {
+  const routes = (world.tradeRoutes || []).filter((route) => route.status === 'active' && (route.from === country.code || route.to === country.code)).length;
+  const alliance = (world.alliances || []).find((item) => item.id === country.allianceId);
+  const occupied = Object.values(world.countries).some((target) => target.occupation?.by === country.code && target.occupation.percent > 0);
+  const values = {
+    economy: Math.min(1, country.gdp / 2500, country.income / 55, routes / 4),
+    science: Math.min(1, Object.keys(country.techs || {}).length / 12, (country.completedProjects || []).length / 3),
+    diplomacy: Math.min(1, country.influence / 82, (alliance?.members?.length || 0) / 4, country.reputation / 65),
+    military: Math.min(1, country.militaryPower / 300, occupied ? 1 : 0),
+    peace: Math.min(1, country.stability / 82, country.happiness / 82, (country.treaties || []).length / 5, country.atWar.length ? 0 : 1)
+  };
+  return round(clamp(values[country.victoryPath] || 0, 0, 1) * 100, 1);
+}
 
 function initialVault(seed, code) {
   return Object.fromEntries(Object.keys(STEALABLE_ASSETS).map((id, index) => [id, 1 + Math.floor(hashFloat(`${seed}:vault:${code}:${id}:${index}`) * 2)]));
@@ -248,6 +374,8 @@ function initialCountry(meta, seed) {
   const gdp = major?.[1] || Math.round(clamp(population * (3 + r * 34), 1, 1800));
   const development = major?.[2] || Math.round(28 + scale * 35 + r * 18);
   const military = Math.round(clamp(8 + scale * 26 + r * 20 + (major ? 18 : 0), 5, 88));
+  const strategic = initialStrategicEconomy(meta, seed, development);
+  const victoryIds = Object.keys(VICTORY_PATHS);
   return {
     code: meta.code,
     ownerId: null,
@@ -286,6 +414,33 @@ function initialCountry(meta, seed) {
       experience: Math.round(8 + military * .24),
       medical: Math.round(8 + development * .16)
     },
+    units: {
+      infantry: round(clamp(military * .45, 3, 40), 1),
+      armor: round(clamp(military * .25, 1, 28), 1),
+      airWings: round(clamp(military * .18, 1, 24), 1),
+      airDefense: round(clamp(military * .2, 1, 26), 1),
+      fleet: meta.landlocked ? 0 : round(clamp(military * .15, 1, 22), 1)
+    },
+    resources: strategic.stock,
+    resourceProduction: strategic.production,
+    factions: {
+      people: round(clamp(44 + r * 30, 25, 82), 1),
+      business: round(clamp(42 + development * .28 + r * 18, 28, 84), 1),
+      military: round(clamp(42 + military * .38 + r * 15, 30, 86), 1),
+      elites: round(clamp(48 + r * 28, 30, 82), 1),
+      opposition: round(clamp(28 + (70 - development) * .22 + (1 - r) * 12, 18, 58), 1)
+    },
+    advisors: {},
+    media: { credibility: round(clamp(52 + development * .25, 45, 78), 1), propaganda: 0, warSupport: 50 },
+    allianceId: null,
+    intelligenceReports: [],
+    lastIntelTurn: null,
+    lastMediaTurn: null,
+    crisisChoices: {},
+    politicalCrisis: null,
+    victoryPath: victoryIds[Math.floor(hashFloat(`${seed}:victory:${meta.code}`) * victoryIds.length)],
+    victoryProgress: 0,
+    victoryAchieved: false,
     taxRate: 24,
     focus: 'balanced',
     doctrine: 'balanced',
@@ -321,6 +476,13 @@ function createWorld(seed = crypto.randomUUID()) {
     relations: {},
     wars: [],
     warInvites: [],
+    alliances: [],
+    allianceInvites: [],
+    tradeOffers: [],
+    tradeRoutes: [],
+    globalCrisis: null,
+    crisisHistory: [],
+    hallOfFame: [],
     news: [{ id: crypto.randomUUID(), turn: 1, tone: 'blue', text: 'Началась новая эпоха мировой политики. Все государства выбрали осторожный курс.', createdAt: Date.now() }],
     playerNews: [],
     nextTurnAt: Date.now() + 60000
@@ -334,14 +496,51 @@ function migrateWorld(world) {
   world.wars ||= [];
   world.warInvites ||= [];
   world.playerNews ||= [];
+  world.alliances ||= [];
+  world.allianceInvites ||= [];
+  world.tradeOffers ||= [];
+  world.tradeRoutes ||= [];
+  world.globalCrisis ??= null;
+  world.crisisHistory ||= [];
+  world.hallOfFame ||= [];
   for (const [index, item] of (world.news || []).entries()) item.createdAt ??= Date.now() - index * 1000;
   for (const country of Object.values(world.countries || {})) {
+    const meta = CATALOG_BY_CODE[country.code];
+    const strategic = initialStrategicEconomy(meta, world.seed || 'legacy', (country.industry + country.infrastructure + country.science) / 3 || 45);
     country.army ||= {};
     country.army.reserve ??= round(clamp((country.population || 1) * 1.2, 8, 999), 1);
     country.army.supplies ??= 78;
     country.army.morale ??= clamp(country.happiness || 65, 25, 90);
     country.army.experience ??= 15;
     country.army.medical ??= 12;
+    country.units ||= {
+      infantry: round(clamp((country.army.equipment || 20) * .45, 3, 40), 1),
+      armor: round(clamp((country.army.equipment || 20) * .25, 1, 28), 1),
+      airWings: round(clamp((country.army.air || 15) * .25, 1, 24), 1),
+      airDefense: round(clamp((country.army.defense || 20) * .22, 1, 26), 1),
+      fleet: meta?.landlocked ? 0 : round(clamp((country.army.navy || 10) * .25, 1, 22), 1)
+    };
+    for (const id of Object.keys(UNIT_PROGRAMS)) country.units[id] ??= id === 'fleet' && meta?.landlocked ? 0 : 1;
+    country.resources ||= strategic.stock;
+    country.resourceProduction ||= strategic.production;
+    for (const id of Object.keys(STRATEGIC_RESOURCES)) {
+      country.resources[id] ??= strategic.stock[id];
+      country.resourceProduction[id] ??= strategic.production[id];
+    }
+    country.factions ||= { people: 58, business: 55, military: 55, elites: 58, opposition: 35 };
+    for (const id of Object.keys(POLITICAL_FACTIONS)) country.factions[id] ??= id === 'opposition' ? 35 : 55;
+    country.advisors ||= {};
+    country.media ||= { credibility: 58, propaganda: 0, warSupport: 50 };
+    country.media.credibility ??= 58; country.media.propaganda ??= 0; country.media.warSupport ??= 50;
+    country.allianceId ??= null;
+    country.intelligenceReports ||= [];
+    country.lastIntelTurn ??= null;
+    country.lastMediaTurn ??= null;
+    country.crisisChoices ||= {};
+    country.politicalCrisis ??= null;
+    country.victoryPath ||= Object.keys(VICTORY_PATHS)[Math.floor(hashFloat(`${world.seed}:victory:${country.code}`) * Object.keys(VICTORY_PATHS).length)];
+    country.victoryProgress ??= 0;
+    country.victoryAchieved ??= false;
     country.doctrine ??= 'balanced';
     country.warExhaustion ??= 0;
     country.supportingWarId ??= null;
@@ -375,6 +574,17 @@ function migrateWorld(world) {
       country.occupation.revolt ??= null;
     }
   }
+  for (const alliance of world.alliances) {
+    alliance.members ||= [alliance.founder].filter(Boolean);
+    alliance.budget ??= 0;
+    alliance.createdAt ??= world.turn;
+    alliance.color ||= '#65d3aa';
+  }
+  for (const route of world.tradeRoutes) {
+    route.status ||= 'active';
+    route.amount ??= 4;
+    route.price ??= (STRATEGIC_RESOURCES[route.resource]?.price || 5) * route.amount;
+  }
   for (const war of world.wars) {
     war.supporters ||= { a: [], b: [] };
     war.supporters.a ||= []; war.supporters.b ||= [];
@@ -389,6 +599,7 @@ function migrateWorld(world) {
     war.surge ??= null;
     war.weather ??= 'clear';
     war.weatherChangedAtTick ??= 0;
+    war.terrain ??= theaterTerrain(war.b);
   }
   const activePairs = new Set(world.wars.filter((war) => war.status === 'active').map((war) => relationKey(war.a, war.b)));
   for (const country of Object.values(world.countries || {})) {
@@ -631,7 +842,10 @@ function memberCombatPower(member, attacking) {
   const roleCoordination = member.role === 'ally' ? .9 : 1;
   const mode = attacking ? doctrine.attack : doctrine.defense;
   const technology = 1 + (attacking ? (tech.attackPct || 0) : (tech.defensePct || 0));
-  return militaryPower(country) * member.fraction * mode * technology * exhaustion * roleCoordination;
+  const formations = attacking
+    ? 1 + clamp((country.units.armor || 0) * .0025 + (country.units.airWings || 0) * .0022, 0, .24)
+    : 1 + clamp((country.units.infantry || 0) * .0015 + (country.units.airDefense || 0) * .0028, 0, .22);
+  return militaryPower(country) * member.fraction * mode * technology * formations * exhaustion * roleCoordination;
 }
 
 function coalitionSummary(members, attacking) {
@@ -649,18 +863,33 @@ function applyCoalitionLosses(members, totalLosses, equipmentLoss, supplyUse, mo
     const country = member.country; const committed = country.army.manpower * member.fraction;
     const share = committed / totalCommitted; const tech = technologyBonuses(country);
     const medicalSave = clamp((country.army.medical || 0) / 300, 0, .28);
-    const saved = clamp((tech.manpowerSave || 0) + medicalSave, 0, .65);
+    const saved = clamp((tech.manpowerSave || 0) + medicalSave + (advisorBonuses(country).casualtyReduction || 0), 0, .7);
     const losses = Math.min(country.army.manpower, totalLosses * share * (1 - saved));
     actualLosses += losses;
     country.army.manpower = clamp(round(country.army.manpower - losses, 1), 0, 999);
     country.army.equipment = clamp(round(country.army.equipment - equipmentLoss * share, 1), 0, 100);
     const memberSupplyUse = member.role === 'main' ? supplyUse : supplyUse * Math.max(.35, member.fraction);
     country.army.supplies = clamp(round(country.army.supplies - memberSupplyUse, 1), 0, 100);
+    country.resources.fuel = clamp(round(country.resources.fuel - memberSupplyUse * .16, 1), 0, 150);
+    country.resources.food = clamp(round(country.resources.food - memberSupplyUse * .08, 1), 0, 150);
     country.army.morale = clamp(round(country.army.morale + moraleDelta, 1), 0, 100);
     country.army.experience = clamp(round(country.army.experience + experienceGain, 1), 0, 100);
     country.army.readiness = clamp(round(country.army.readiness - Math.max(1, supplyUse * .2), 1), 0, 100);
   }
   return round(actualLosses, 1);
+}
+
+function theaterTerrain(code) {
+  const meta = CATALOG_BY_CODE[code];
+  const mountains = new Set(['AFG','ARM','AUT','BTN','CHE','CHL','COL','ECU','ETH','GEO','KGZ','LBN','NPL','PAK','PER','TJK']);
+  const deserts = new Set(['DZA','EGY','IRQ','IRN','JOR','KWT','LBY','MAR','MRT','NAM','OMN','QAT','SAU','ARE','YEM']);
+  const jungles = new Set(['BRA','COD','COG','COL','ECU','GAB','IDN','MYS','PNG','PER','VEN']);
+  if (mountains.has(code)) return 'mountains';
+  if (deserts.has(code)) return 'desert';
+  if (jungles.has(code)) return 'jungle';
+  if (Math.abs(meta?.latlng?.[0] || 0) > 58) return 'arctic';
+  if (!meta?.landlocked && (meta?.area || 0) < 500000) return 'coast';
+  return 'plains';
 }
 
 function frontDistanceFactor(attacker, defender) {
@@ -691,7 +920,7 @@ function resolveWarTick(world, war, now = Date.now()) {
   if (!war || war.status !== 'active' || now < (war.nextBattleAt || 0)) return null;
   const first = world.countries[war.a]; const second = world.countries[war.b];
   if (!first || !second) return null;
-  war.kind ||= 'territorial'; war.surgeCooldowns ||= { a: 0, b: 0 }; war.weather ||= 'clear';
+  war.kind ||= 'territorial'; war.surgeCooldowns ||= { a: 0, b: 0 }; war.weather ||= 'clear'; war.terrain ||= theaterTerrain(war.b);
   war.nextBattleAt = now + WAR_TICK_MS;
   war.battleTicks = (war.battleTicks || 0) + 1;
   if (!WAR_WEATHER[war.weather]) war.weather = 'clear';
@@ -716,7 +945,8 @@ function resolveWarTick(world, war, now = Date.now()) {
   }
   const a = automaticCoalition(world, war, 'a'); const b = automaticCoalition(world, war, 'b');
   const weather = WAR_WEATHER[war.weather] || WAR_WEATHER.clear;
-  a.power *= weather.power; b.power *= weather.power;
+  const terrain = WAR_TERRAINS[war.terrain] || WAR_TERRAINS.plains;
+  a.power *= weather.power * terrain.attack; b.power *= weather.power * terrain.defense;
   const variation = .97 + hashFloat(`${world.seed}:live-front:${war.id}:${war.battleTicks}`) * .06;
   const ratio = Math.max(.03, a.power * variation / Math.max(1, b.power));
   const pressure = Math.log2(ratio);
@@ -728,7 +958,8 @@ function resolveWarTick(world, war, now = Date.now()) {
   const winningTech = technologyBonuses(winner.country); const winningDoctrine = doctrineFor(winner.country);
   const captureMultiplier = (1 + (winningTech.capturePct || 0)) * (winningDoctrine.capture || 1);
   const breakthrough = hashFloat(`${world.seed}:breakthrough:${war.id}:${war.battleTicks}`) > .94 ? 1.45 : 1;
-  const movement = round(clamp((.14 + Math.abs(pressure) * .92 + Math.abs(Math.log2(Math.max(.05, troopRatio))) * .12) * captureMultiplier * weather.capture * breakthrough, .1, 2.65), 1);
+  const terrainCapture = winningSide === 'a' ? terrain.capture : clamp(2 - terrain.capture, .8, 1.3);
+  const movement = round(clamp((.14 + Math.abs(pressure) * .92 + Math.abs(Math.log2(Math.max(.05, troopRatio))) * .12) * captureMultiplier * weather.capture * terrainCapture * breakthrough, .1, 2.65), 1);
   const previousFront = war.front;
   war.front = round(clamp(war.front + (winningSide === 'a' ? movement : -movement), -100, 100), 1);
   if (war.kind === 'uprising') war.front = Math.max(0, war.front);
@@ -736,8 +967,8 @@ function resolveWarTick(world, war, now = Date.now()) {
   const intensity = .0011 + clamp(Math.abs(pressure) * .00045, 0, .0012);
   const aLossPool = Math.max(.02, a.offense.troops * intensity * clamp(b.power / Math.max(1, a.power), .62, 1.9));
   const bLossPool = Math.max(.02, b.offense.troops * intensity * clamp(a.power / Math.max(1, b.power), .62, 1.9));
-  const aLosses = applyCoalitionLosses(a.members, aLossPool, .045, .11 * weather.supply, winningSide === 'a' ? .12 : -.18, .08);
-  const bLosses = applyCoalitionLosses(b.members, bLossPool, .045, .11 * weather.supply, winningSide === 'b' ? .12 : -.18, .08);
+  const aLosses = applyCoalitionLosses(a.members, aLossPool, .045, .11 * weather.supply * terrain.supply, winningSide === 'a' ? .12 : -.18, .08);
+  const bLosses = applyCoalitionLosses(b.members, bLossPool, .045, .11 * weather.supply * terrain.supply, winningSide === 'b' ? .12 : -.18, .08);
   first.warExhaustion = clamp(round(first.warExhaustion + .08 + aLosses * .08, 1), 0, 100);
   second.warExhaustion = clamp(round(second.warExhaustion + .08 + bLosses * .08, 1), 0, 100);
   syncWarOccupation(world, war);
@@ -757,7 +988,7 @@ function resolveWarTick(world, war, now = Date.now()) {
     attackerPower: round(winner.power, 1), defenderPower: round(loser.power, 1),
     attackerLosses: winningSide === 'a' ? aLosses : bLosses, defenderLosses: winningSide === 'a' ? bLosses : aLosses,
     attackerAllies: winner.offense.allies, defenderAllies: loser.offense.allies,
-    supplyUsed: round(.11 * weather.supply, 2), distancePenalty: round((1 - winner.distance) * 100), weather: war.weather
+    supplyUsed: round(.11 * weather.supply * terrain.supply, 2), distancePenalty: round((1 - winner.distance) * 100), weather: war.weather, terrain: war.terrain
   };
   war.lastOperation = battle;
   war.battles.push(battle); war.battles = war.battles.slice(-16);
@@ -829,7 +1060,7 @@ function startUprisingWar(world, controller, subject, now = Date.now()) {
     suppressionTarget: round(Math.min(99, front + clamp(16 + occupation.resistance * .16, 18, 30)), 1),
     startedAt: world.turn, startedAtMs: now, nextBattleAt: now + 900, battleTicks: 0, lastReportedMilestone: '',
     operations: 0, lastOperation: null, supporters: { a: [], b: [] }, operationsByTurn: {}, battles: [], casualties: { a: 0, b: 0 },
-    surgeCooldowns: { a: 0, b: 0 }, surge: null, weather: 'clear', weatherChangedAtTick: 0
+    surgeCooldowns: { a: 0, b: 0 }, surge: null, weather: 'clear', weatherChangedAtTick: 0, terrain: theaterTerrain(subject.code)
   };
   occupation.permanent = false; occupation.warId = war.id;
   occupation.revolt = { ...(occupation.revolt || {}), status: 'fighting', warId: war.id, startedAt: now };
@@ -994,16 +1225,21 @@ function incomeFor(country) {
   const taxes = country.taxRate / 24;
   const warPenalty = country.atWar.length ? .72 : country.supportingWarId ? .88 : 1;
   const bonuses = technologyBonuses(country);
+  const advisors = advisorBonuses(country);
   const tradeDeals = country.treaties.filter((treaty) => treaty.startsWith('trade:')).length;
   const tradeMultiplier = 1 + tradeDeals * (.015 + (bonuses.tradeBonus || 0) * .01);
   const occupationPenalty = 1 - clamp((country.occupation?.percent || 0) * .004, 0, .4);
-  return round(clamp(base * systems * taxes * warPenalty * occupationPenalty * tradeMultiplier * (1 + (bonuses.incomePct || 0)), 3, 180), 1);
+  const resourceSecurity = (country.resources?.energy || 0) < 4 || (country.resources?.food || 0) < 4 ? .78 : 1;
+  return round(clamp(base * systems * taxes * warPenalty * occupationPenalty * tradeMultiplier * resourceSecurity * (1 + (bonuses.incomePct || 0) + (advisors.incomePct || 0)), 3, 180), 1);
 }
 
 function militaryPower(c) {
   const raw = c.army.manpower * .55 + c.army.equipment * .9 + c.army.readiness * .5 + c.army.air * .7 + c.army.navy * .35 + c.army.defense * .5;
+  const specialized = (c.units?.infantry || 0) * .35 + (c.units?.armor || 0) * .85 + (c.units?.airWings || 0) * 1.05 + (c.units?.airDefense || 0) * .7 + (c.units?.fleet || 0) * .55;
   const condition = (.78 + (c.army.morale ?? 60) / 450) * (.82 + (c.army.supplies ?? 60) / 550) * (1 + (c.army.experience ?? 0) / 500);
-  return Math.round(raw * condition);
+  const fuel = (c.resources?.fuel || 0) < 3 ? .72 : 1;
+  const advisor = 1 + (advisorBonuses(c).combatPct || 0);
+  return Math.round((raw + specialized) * condition * fuel * advisor);
 }
 
 function calculateScores(world) {
@@ -1016,9 +1252,11 @@ function calculateScores(world) {
     country.territoryArea = Math.round(retainedArea + controlledArea);
     country.income = incomeFor(country);
     country.militaryPower = militaryPower(country);
+    country.victoryProgress = strategicGoalProgress(world, country);
     const progress = Object.keys(country.techs || {}).length * 5 + (country.completedProjects?.length || 0) * 12;
     const territory = Math.sqrt(Math.max(1, country.territoryArea)) / 18;
-    country.score = country.eliminated ? 0 : Math.round(country.gdp * 0.025 + country.stability + country.happiness + country.influence * 1.5 + country.reputation * .45 + country.police * .2 + country.militaryPower * 0.45 + progress + territory);
+    const strategic = (country.victoryProgress || 0) * .45 + Object.keys(country.advisors || {}).length * 5 + (country.allianceId ? 8 : 0);
+    country.score = country.eliminated ? 0 : Math.round(country.gdp * 0.025 + country.stability + country.happiness + country.influence * 1.5 + country.reputation * .45 + country.police * .2 + country.militaryPower * 0.45 + progress + territory + strategic);
   }
 }
 
@@ -1043,6 +1281,60 @@ function spend(country, amount) {
   return true;
 }
 
+function applyStrategicEffects(country, option) {
+  if (option.treasury) country.treasury = round(country.treasury + option.treasury, 1);
+  for (const [key, value] of Object.entries(option.effects || {})) country[key] = clamp(round((country[key] || 0) + value, 1), 0, 100);
+  for (const [key, value] of Object.entries(option.production || {})) country.resourceProduction[key] = round((country.resourceProduction[key] || 0) + value, 1);
+  for (const [key, value] of Object.entries(option.resources || {})) country.resources[key] = clamp(round((country.resources[key] || 0) + value, 1), 0, 150);
+}
+
+function addAllianceMember(world, alliance, country) {
+  if (!alliance.members.includes(country.code)) alliance.members.push(country.code);
+  country.allianceId = alliance.id;
+  for (const memberCode of alliance.members) {
+    if (memberCode === country.code) continue;
+    const member = world.countries[memberCode];
+    if (!member) continue;
+    const forward = `alliance:${memberCode}`; const reverse = `alliance:${country.code}`;
+    if (!country.treaties.includes(forward)) country.treaties.push(forward);
+    if (!member.treaties.includes(reverse)) member.treaties.push(reverse);
+    changeRelation(world, country.code, memberCode, 12);
+  }
+}
+
+function removeAllianceMember(world, alliance, country) {
+  alliance.members = alliance.members.filter((code) => code !== country.code);
+  country.allianceId = null;
+  for (const memberCode of alliance.members) {
+    const member = world.countries[memberCode];
+    if (!member) continue;
+    country.treaties = country.treaties.filter((treaty) => treaty !== `alliance:${memberCode}`);
+    member.treaties = member.treaties.filter((treaty) => treaty !== `alliance:${country.code}`);
+  }
+}
+
+function createTradeRoute(world, buyer, seller, resource) {
+  const definition = STRATEGIC_RESOURCES[resource];
+  if (!definition) return { ok: false, error: 'Неизвестный стратегический ресурс' };
+  if (world.tradeRoutes.filter((route) => route.status !== 'closed' && route.to === buyer.code).length >= 4) return { ok: false, error: 'Страна уже использует четыре импортных маршрута' };
+  const existing = world.tradeRoutes.find((route) => route.status === 'active' && route.from === seller.code && route.to === buyer.code && route.resource === resource);
+  if (existing) return { ok: false, error: 'Такой маршрут уже работает' };
+  const amount = 3;
+  const price = definition.price * amount;
+  const route = { id: crypto.randomUUID(), from: seller.code, to: buyer.code, resource, amount, price, status: 'active', createdAt: world.turn, delivered: 0 };
+  world.tradeRoutes.push(route);
+  const tradeForward = `trade:${seller.code}`; const tradeReverse = `trade:${buyer.code}`;
+  if (!buyer.treaties.includes(tradeForward)) buyer.treaties.push(tradeForward);
+  if (!seller.treaties.includes(tradeReverse)) seller.treaties.push(tradeReverse);
+  changeRelation(world, buyer.code, seller.code, 7);
+  pushNews(world, `${CATALOG_BY_CODE[seller.code].name} начинает поставки ресурса «${definition.name}» в государство ${CATALOG_BY_CODE[buyer.code].name}.`, 'green');
+  return { ok: true, toast: `Маршрут создан · ${amount} ед. за ${price} млрд каждый ход` };
+}
+
+function politicalSupport(country) {
+  return round(((country.factions.people || 0) + (country.factions.business || 0) + (country.factions.military || 0) + (country.factions.elites || 0)) / 4 - (country.factions.opposition || 0) * .35, 1);
+}
+
 function performAction(world, player, message) {
   migrateWorld(world);
   const country = world.countries[player.countryCode];
@@ -1065,11 +1357,178 @@ function performAction(world, player, message) {
     world.playerNews.unshift(article);
     world.playerNews = world.playerNews.slice(0, 80);
     country.lastPlayerNewsAt = now;
+    country.media.credibility = clamp(round(country.media.credibility + (category === 'statement' ? -.2 : .4), 1), 0, 100);
+    if (category === 'economy') country.factions.business = clamp(round(country.factions.business + .6, 1), 0, 100);
+    if (category === 'society') country.factions.people = clamp(round(country.factions.people + .6, 1), 0, 100);
+    if (category === 'military' && country.atWar.length) country.media.warSupport = clamp(round(country.media.warSupport + 1, 1), 0, 100);
+    if (category === 'politics') country.influence = clamp(round(country.influence + .3, 1), 0, 100);
     country.lastAction = `Опубликовано заявление «${headline}»`;
     return { ok: true, toast: 'Новость опубликована для всех игроков' };
   }
 
   if (country.eliminated || country.absorbedBy) return { ok: false, error: `Ваша страна полностью присоединена к государству ${CATALOG_BY_CODE[country.absorbedBy]?.name || country.absorbedBy}. Вы продолжаете наблюдать за миром.` };
+
+  if (message.action === 'internal_policy') {
+    const plans = {
+      people: { cost: 18, effects: { happiness: 4, stability: 1 }, factions: { people: 10, business: -3, opposition: -3 }, text: 'социальный пакет для граждан' },
+      business: { cost: 20, effects: { industry: 3, stability: -1 }, factions: { business: 11, people: -3, elites: 2 }, text: 'пакет свободы предпринимательства' },
+      military: { cost: 22, army: { readiness: 4, morale: 3 }, factions: { military: 11, people: -2, opposition: 2 }, text: 'расширение полномочий генерального штаба' },
+      anti_corruption: { cost: 30, effects: { reputation: 5, police: 3, stability: 2 }, factions: { people: 7, business: 4, elites: -10, opposition: -5 }, text: 'антикоррупционную реформу' },
+      emergency: { cost: 14, effects: { stability: 6, happiness: -5, reputation: -4 }, factions: { military: 7, elites: 5, people: -7, opposition: 9 }, text: 'чрезвычайное положение' }
+    };
+    const plan = plans[message.id];
+    if (!plan) return { ok: false, error: 'Неизвестная внутренняя реформа' };
+    if (country.lastPoliticalTurn === world.turn) return { ok: false, error: 'Политический капитал этого квартала уже использован' };
+    if (!spend(country, plan.cost)) return { ok: false, error: `Для реформы нужно ${plan.cost} млрд` };
+    for (const [key, value] of Object.entries(plan.effects || {})) country[key] = clamp(round(country[key] + value, 1), 0, 100);
+    for (const [key, value] of Object.entries(plan.factions || {})) country.factions[key] = clamp(round(country.factions[key] + value, 1), 0, 100);
+    for (const [key, value] of Object.entries(plan.army || {})) country.army[key] = clamp(round(country.army[key] + value, 1), 0, 100);
+    country.lastPoliticalTurn = world.turn;
+    country.lastAction = `Правительство проводит ${plan.text}`;
+    return { ok: true, toast: `Реформа принята · поддержка правительства ${politicalSupport(country)}` };
+  }
+
+  if (message.action === 'political_crisis') {
+    if (!country.politicalCrisis) return { ok: false, error: 'Острого внутреннего кризиса сейчас нет' };
+    const responses = {
+      negotiate: { cost: 24, opposition: -18, stability: 4, happiness: 5, reputation: 2, text: 'Правительство начало переговоры и согласилось на ограниченные реформы' },
+      elections: { cost: 34, opposition: -28, stability: 7, happiness: 8, reputation: 5, text: 'Проведены досрочные выборы и сформировано новое правительство' },
+      suppress: { cost: 18, opposition: -12, stability: 8, happiness: -9, reputation: -8, text: 'Силовые структуры разогнали протесты' }
+    };
+    const response = responses[message.id];
+    if (!response) return { ok: false, error: 'Неизвестный ответ на политический кризис' };
+    if (!spend(country, response.cost)) return { ok: false, error: `Для решения нужно ${response.cost} млрд` };
+    country.factions.opposition = clamp(round(country.factions.opposition + response.opposition, 1), 0, 100);
+    for (const key of ['stability','happiness','reputation']) country[key] = clamp(round(country[key] + response[key], 1), 0, 100);
+    country.politicalCrisis = null; country.lastAction = response.text;
+    pushNews(world, `${meta.name}: ${response.text.toLowerCase()}.`, message.id === 'suppress' ? 'red' : 'green');
+    return { ok: true, toast: 'Острый политический кризис завершён' };
+  }
+
+  if (message.action === 'advisor') {
+    const advisor = ADVISORS[message.id];
+    if (!advisor) return { ok: false, error: 'Неизвестный кандидат' };
+    if (Object.values(country.advisors).includes(message.id)) return { ok: false, error: 'Этот советник уже работает в правительстве' };
+    if (!spend(country, advisor.cost)) return { ok: false, error: `Для контракта нужно ${advisor.cost} млрд` };
+    country.advisors[advisor.role] = message.id;
+    country.lastAction = `${advisor.name} назначен на должность «${advisor.role}»`;
+    return { ok: true, toast: `${advisor.name} вошёл в совет правительства` };
+  }
+
+  if (message.action === 'unit_program') {
+    const program = UNIT_PROGRAMS[message.id];
+    if (!program) return { ok: false, error: 'Неизвестная военная специализация' };
+    if (program.naval && meta.landlocked) return { ok: false, error: 'Государство без выхода к морю не может строить экспедиционный флот' };
+    if (country.treasury < program.cost) return { ok: false, error: `Для программы нужно ${program.cost} млрд` };
+    if (!spendResources(country, program.resources)) return { ok: false, error: 'Не хватает стратегических ресурсов для производства' };
+    spend(country, program.cost);
+    country.units[message.id] = clamp(round(country.units[message.id] + program.gain, 1), 0, 100);
+    if (message.id === 'infantry') country.army.manpower = clamp(round(country.army.manpower + 6, 1), 0, 999);
+    if (message.id === 'armor') country.army.equipment = clamp(round(country.army.equipment + 4, 1), 0, 100);
+    if (message.id === 'airWings') country.army.air = clamp(round(country.army.air + 4, 1), 0, 100);
+    if (message.id === 'airDefense') country.army.defense = clamp(round(country.army.defense + 4, 1), 0, 100);
+    if (message.id === 'fleet') country.army.navy = clamp(round(country.army.navy + 4, 1), 0, 100);
+    country.lastAction = `Развёрнута программа «${program.name}»`;
+    return { ok: true, toast: `${program.name}: сформировано +${program.gain}` };
+  }
+
+  if (message.action === 'crisis_response') {
+    const crisis = world.globalCrisis;
+    const option = crisis && GLOBAL_CRISES.find((item) => item.id === crisis.id)?.options.find((item) => item.id === message.id);
+    if (!crisis || crisis.endsAt < world.turn || !option) return { ok: false, error: 'Это кризисное решение уже неактуально' };
+    if (country.crisisChoices[crisis.id]) return { ok: false, error: 'Страна уже выбрала ответ на этот кризис' };
+    if (option.cost && country.treasury < option.cost) return { ok: false, error: `Для решения нужно ${option.cost} млрд` };
+    for (const [id, value] of Object.entries(option.resources || {})) if (value < 0 && (country.resources[id] || 0) < Math.abs(value)) return { ok: false, error: `Не хватает ресурса «${STRATEGIC_RESOURCES[id].name}»` };
+    if (option.cost) spend(country, option.cost);
+    applyStrategicEffects(country, option);
+    country.crisisChoices[crisis.id] = { option: option.id, turn: world.turn };
+    country.lastAction = `${crisis.name}: ${option.label}`;
+    return { ok: true, toast: 'Кризисная стратегия утверждена' };
+  }
+
+  if (message.action === 'alliance_bloc' && message.id === 'create') {
+    if (country.allianceId) return { ok: false, error: 'Страна уже состоит в международном блоке' };
+    if (!spend(country, 40)) return { ok: false, error: 'Для учреждения блока нужно 40 млрд' };
+    const rawName = String(message.name || '').replace(/[<>\u0000-\u001f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 32);
+    const name = rawName.length >= 3 ? rawName : `Союз ${meta.name}`;
+    const alliance = { id: crypto.randomUUID(), name, founder: country.code, members: [country.code], budget: 0, createdAt: world.turn, color: ['#65d3aa','#67bce8','#d7b862','#be8be8'][world.alliances.length % 4] };
+    world.alliances.push(alliance); country.allianceId = alliance.id;
+    pushNews(world, `${meta.name} учреждает международный блок «${name}».`, 'gold');
+    return { ok: true, toast: `Международный блок «${name}» создан` };
+  }
+
+  if (message.action === 'alliance_bloc' && ['accept','decline'].includes(message.id)) {
+    const invite = world.allianceInvites.find((item) => item.id === message.inviteId && item.to === country.code);
+    if (!invite) return { ok: false, error: 'Приглашение уже неактуально' };
+    world.allianceInvites = world.allianceInvites.filter((item) => item.id !== invite.id);
+    if (message.id === 'decline') return { ok: true, toast: 'Приглашение в блок отклонено' };
+    if (country.allianceId) return { ok: false, error: 'Страна уже состоит в другом блоке' };
+    const alliance = world.alliances.find((item) => item.id === invite.allianceId);
+    if (!alliance) return { ok: false, error: 'Международный блок больше не существует' };
+    if (alliance.members.length >= 8) return { ok: false, error: 'В международном блоке больше нет свободных мест' };
+    addAllianceMember(world, alliance, country);
+    pushNews(world, `${meta.name} вступает в международный блок «${alliance.name}».`, 'gold');
+    return { ok: true, toast: `Страна вступила в блок «${alliance.name}»` };
+  }
+
+  if (message.action === 'alliance_bloc' && message.id === 'leave') {
+    const alliance = world.alliances.find((item) => item.id === country.allianceId);
+    if (!alliance) return { ok: false, error: 'Страна не состоит в международном блоке' };
+    if (alliance.founder === country.code && alliance.members.length > 1) return { ok: false, error: 'Основатель должен сначала остаться единственным участником блока' };
+    removeAllianceMember(world, alliance, country);
+    country.reputation = clamp(country.reputation - 4, 0, 100);
+    if (!alliance.members.length) world.alliances = world.alliances.filter((item) => item.id !== alliance.id);
+    return { ok: true, toast: 'Страна вышла из международного блока' };
+  }
+
+  if (message.action === 'alliance_bloc' && message.id === 'disband') {
+    const alliance = world.alliances.find((item) => item.id === country.allianceId);
+    if (!alliance || alliance.founder !== country.code) return { ok: false, error: 'Распустить блок может только основатель' };
+    for (const code of [...alliance.members]) { const member = world.countries[code]; if (member) removeAllianceMember(world, alliance, member); }
+    world.alliances = world.alliances.filter((item) => item.id !== alliance.id);
+    world.allianceInvites = world.allianceInvites.filter((item) => item.allianceId !== alliance.id);
+    pushNews(world, `${meta.name} распускает международный блок «${alliance.name}».`, 'red');
+    return { ok: true, toast: 'Международный блок распущен' };
+  }
+
+  if (message.action === 'alliance_bloc' && message.id === 'contribute') {
+    const alliance = world.alliances.find((item) => item.id === country.allianceId);
+    if (!alliance) return { ok: false, error: 'Страна не состоит в международном блоке' };
+    if (!spend(country, 15)) return { ok: false, error: 'Взнос в общий бюджет составляет 15 млрд' };
+    alliance.budget = round(alliance.budget + 15, 1); country.influence = clamp(round(country.influence + 1, 1), 0, 100);
+    return { ok: true, toast: 'В общий бюджет блока внесено 15 млрд' };
+  }
+
+  if (message.action === 'trade_route' && ['accept','decline'].includes(message.id)) {
+    const offer = world.tradeOffers.find((item) => item.id === message.offerId && item.to === country.code);
+    if (!offer) return { ok: false, error: 'Торговое предложение уже неактуально' };
+    world.tradeOffers = world.tradeOffers.filter((item) => item.id !== offer.id);
+    if (message.id === 'decline') return { ok: true, toast: 'Торговое предложение отклонено' };
+    const buyer = world.countries[offer.from];
+    if (!buyer) return { ok: false, error: 'Покупатель больше недоступен' };
+    return createTradeRoute(world, buyer, country, offer.resource);
+  }
+
+  if (message.action === 'trade_route' && message.id === 'cancel') {
+    const route = world.tradeRoutes.find((item) => item.id === message.routeId && item.status !== 'closed' && (item.from === country.code || item.to === country.code));
+    if (!route) return { ok: false, error: 'Торговый маршрут уже закрыт' };
+    route.status = 'closed'; route.closedAt = world.turn;
+    changeRelation(world, route.from, route.to, -3);
+    return { ok: true, toast: 'Регулярный торговый маршрут закрыт' };
+  }
+
+  if (message.action === 'media_campaign' && ['unity','war'].includes(message.id)) {
+    if (country.lastMediaTurn === world.turn) return { ok: false, error: 'Информационная кампания в этом квартале уже проводилась' };
+    if (message.id === 'war' && !country.atWar.length) return { ok: false, error: 'Военная мобилизация прессы доступна только во время войны' };
+    if (!spend(country, message.id === 'war' ? 22 : 16)) return { ok: false, error: 'Не хватает средств на информационную кампанию' };
+    country.lastMediaTurn = world.turn;
+    if (message.id === 'unity') {
+      country.happiness = clamp(country.happiness + 3, 0, 100); country.factions.opposition = clamp(country.factions.opposition - 4, 0, 100); country.media.credibility = clamp(country.media.credibility + 1, 0, 100);
+    } else {
+      country.army.morale = clamp(country.army.morale + 7, 0, 100); country.media.warSupport = clamp(country.media.warSupport + 10, 0, 100); country.media.credibility = clamp(country.media.credibility - 2, 0, 100);
+    }
+    return { ok: true, toast: message.id === 'unity' ? 'Кампания общественного единства запущена' : 'Поддержка военных действий выросла' };
+  }
 
   if (message.action === 'technology') {
     const node = TECH_BY_ID[message.id];
@@ -1092,6 +1551,9 @@ function performAction(world, player, message) {
     if (!project) return { ok: false, error: 'Неизвестный национальный проект' };
     if (country.activeProject) return { ok: false, error: 'Сначала завершите текущий национальный проект' };
     if (country.completedProjects.includes(message.id)) return { ok: false, error: 'Этот проект уже реализован' };
+    if (project.requirements?.coastal && meta.landlocked) return { ok: false, error: 'Для этого мегапроекта нужен выход к морю' };
+    const requirementNames = { science: 'наука', cyber: 'киберпотенциал', energy: 'энергетика', infrastructure: 'инфраструктура' };
+    for (const [field,value] of Object.entries(project.requirements || {})) if (field !== 'coastal' && (country[field] || 0) < value) return { ok: false, error: `Для проекта нужно: ${requirementNames[field] || field} не ниже ${value}` };
     if (!spend(country, project.cost)) return { ok: false, error: `Для проекта нужно ${project.cost} млрд` };
     country.activeProject = { id: message.id, remaining: project.duration, startedAt: world.turn };
     country.lastAction = `Начат проект «${project.name}»`;
@@ -1179,6 +1641,96 @@ function performAction(world, player, message) {
   if (!target || target.code === country.code) return { ok: false, error: 'Выберите другое государство' };
   if (target.eliminated || target.absorbedBy) return { ok: false, error: `Эта территория уже является частью государства ${CATALOG_BY_CODE[target.absorbedBy]?.name || target.absorbedBy}` };
 
+  if (message.action === 'alliance_bloc' && message.id === 'invite') {
+    const alliance = world.alliances.find((item) => item.id === country.allianceId);
+    if (!alliance || alliance.founder !== country.code) return { ok: false, error: 'Приглашения отправляет основатель международного блока' };
+    if (target.allianceId) return { ok: false, error: 'Страна уже состоит в международном блоке' };
+    if (alliance.members.length >= 8) return { ok: false, error: 'В блоке уже максимальные восемь участников' };
+    if (getRelation(world, country.code, target.code) < 55) return { ok: false, error: 'Для приглашения нужно доверие не ниже +55' };
+    if (world.allianceInvites.some((item) => item.to === target.code && item.allianceId === alliance.id)) return { ok: false, error: 'Приглашение уже отправлено' };
+    if (!spend(country, 8)) return { ok: false, error: 'Дипломатическая конференция стоит 8 млрд' };
+    if (target.isBot) {
+      addAllianceMember(world, alliance, target);
+      pushNews(world, `${targetMeta.name} вступает в международный блок «${alliance.name}».`, 'gold');
+      return { ok: true, toast: `${targetMeta.name} вступает в ваш международный блок` };
+    }
+    world.allianceInvites.push({ id: crypto.randomUUID(), allianceId: alliance.id, from: country.code, to: target.code, createdAt: world.turn });
+    return { ok: true, toast: 'Игрок получил приглашение в международный блок' };
+  }
+
+  if (message.action === 'alliance_bloc' && message.id === 'kick') {
+    const alliance = world.alliances.find((item) => item.id === country.allianceId);
+    if (!alliance || alliance.founder !== country.code) return { ok: false, error: 'Исключать участников может только основатель блока' };
+    if (target.allianceId !== alliance.id || target.code === country.code) return { ok: false, error: 'Эта страна не является участником вашего блока' };
+    removeAllianceMember(world, alliance, target);
+    target.reputation = clamp(round(target.reputation - 2, 1), 0, 100); changeRelation(world, country.code, target.code, -12);
+    pushNews(world, `${targetMeta.name} исключено из международного блока «${alliance.name}».`, 'red');
+    return { ok: true, toast: `${targetMeta.name} исключено из международного блока` };
+  }
+
+  if (message.action === 'trade_route' && message.id === 'propose') {
+    const resource = STRATEGIC_RESOURCES[message.resource] ? message.resource : null;
+    if (!resource) return { ok: false, error: 'Выберите стратегический ресурс' };
+    if (getRelation(world, country.code, target.code) < 10) return { ok: false, error: 'Для маршрута нужно доверие не ниже +10' };
+    const activeRoutes = world.tradeRoutes.filter((route) => route.status === 'active' && route.to === country.code).length;
+    if (activeRoutes >= 4) return { ok: false, error: 'Страна уже использует четыре импортных маршрута' };
+    if ((target.resourceProduction[resource] || 0) < 2) return { ok: false, error: 'У выбранной страны недостаточно производства этого ресурса' };
+    if (target.isBot) return createTradeRoute(world, country, target, resource);
+    if (world.tradeOffers.some((offer) => offer.from === country.code && offer.to === target.code && offer.resource === resource)) return { ok: false, error: 'Такое предложение уже отправлено' };
+    world.tradeOffers.push({ id: crypto.randomUUID(), from: country.code, to: target.code, resource, createdAt: world.turn });
+    return { ok: true, toast: 'Игрок получил предложение о регулярных поставках' };
+  }
+
+  if (message.action === 'media_campaign' && message.id === 'discredit') {
+    if (country.lastMediaTurn === world.turn) return { ok: false, error: 'Информационная кампания в этом квартале уже проводилась' };
+    if (!spend(country, 20)) return { ok: false, error: 'Для международной кампании нужно 20 млрд' };
+    country.lastMediaTurn = world.turn;
+    const chance = clamp(35 + country.media.credibility * .35 + country.cyber * .2 - target.media.credibility * .25, 18, 82);
+    const roll = hashFloat(`${world.seed}:media:${world.turn}:${country.code}:${target.code}`) * 100;
+    if (roll <= chance) {
+      target.reputation = clamp(round(target.reputation - 6, 1), 0, 100); target.factions.opposition = clamp(round(target.factions.opposition + 5, 1), 0, 100);
+      country.influence = clamp(round(country.influence + 3, 1), 0, 100); country.media.propaganda = clamp(round(country.media.propaganda + 4, 1), 0, 100);
+      return { ok: true, toast: `Кампания сработала (${round(chance)}%) · репутация цели −6` };
+    }
+    country.media.credibility = clamp(round(country.media.credibility - 7, 1), 0, 100); country.reputation = clamp(round(country.reputation - 3, 1), 0, 100);
+    changeRelation(world, country.code, target.code, -10);
+    pushNews(world, `${targetMeta.name} публикует доказательства информационной атаки государства ${meta.name}.`, 'red');
+    return { ok: true, toast: 'Манипуляция раскрыта · доверие к вашим СМИ упало' };
+  }
+
+  if (message.action === 'intelligence' && ['recon','sabotage','steal_tech','unrest'].includes(message.id)) {
+    if (country.lastIntelTurn === world.turn) return { ok: false, error: 'Разведывательная сеть уже проводила операцию в этом квартале' };
+    const costs = { recon: 10, sabotage: 18, steal_tech: 24, unrest: 22 };
+    if (!spend(country, costs[message.id])) return { ok: false, error: `Для операции нужно ${costs[message.id]} млрд` };
+    country.lastIntelTurn = world.turn;
+    const advisors = advisorBonuses(country); const defense = advisorBonuses(target);
+    const chance = clamp(34 + country.cyber * .48 - target.cyber * .27 - target.police * .12 + (technologyBonuses(country).intelPct || 0) * 100 + (advisors.intelPct || 0) * 100 - (defense.counterIntel || 0), 12, 88);
+    const roll = hashFloat(`${world.seed}:strategic-intel:${world.turn}:${country.code}:${target.code}:${message.id}`) * 100;
+    if (roll > chance) {
+      country.reputation = clamp(round(country.reputation - 4, 1), 0, 100); changeRelation(world, country.code, target.code, -12);
+      pushNews(world, `${targetMeta.name} разоблачает тайную операцию государства ${meta.name}.`, 'red');
+      return { ok: true, toast: `Операция провалена (${round(chance)}% шанс) · агенты раскрыты` };
+    }
+    let report = '';
+    if (message.id === 'recon') report = `Армия ${target.militaryPower}, снабжение ${round(target.army.supplies)}, топливо ${round(target.resources.fuel)}, стабильность ${round(target.stability)}`;
+    if (message.id === 'sabotage') {
+      target.army.supplies = clamp(round(target.army.supplies - 10, 1), 0, 100); target.resources.fuel = clamp(round(target.resources.fuel - 6, 1), 0, 150); target.infrastructure = clamp(round(target.infrastructure - 2, 1), 0, 100);
+      report = 'Повреждены склады снабжения и транспортная инфраструктура';
+    }
+    if (message.id === 'steal_tech') {
+      const available = Object.keys(target.techs || {}).filter((id) => target.techs[id] && !country.techs[id] && (TECH_BY_ID[id]?.requires || []).every((required) => country.techs[required]));
+      const stolen = available[Math.floor(hashFloat(`${world.seed}:tech-loot:${world.turn}:${target.code}`) * Math.max(1, available.length))];
+      if (stolen) { country.techs[stolen] = world.turn; report = `Получена технология «${TECH_BY_ID[stolen].name}»`; }
+      else { country.techPoints = round(country.techPoints + 2, 1); report = 'Подходящей технологии нет: получено 2 очка развития'; }
+    }
+    if (message.id === 'unrest') {
+      target.stability = clamp(round(target.stability - 4, 1), 0, 100); target.factions.opposition = clamp(round(target.factions.opposition + 7, 1), 0, 100); report = 'Оппозиционные группы усилились, стабильность цели снижена';
+    }
+    country.intelligenceReports.unshift({ id: crypto.randomUUID(), target: target.code, type: message.id, report, turn: world.turn });
+    country.intelligenceReports = country.intelligenceReports.slice(0, 12);
+    return { ok: true, toast: `Операция успешна (${round(chance)}%): ${report}` };
+  }
+
   if (message.action === 'occupation') {
     const occupation = target.occupation;
     if (!occupation || occupation.by !== country.code || !occupation.permanent || occupation.absorbed) return { ok: false, error: 'У вас нет закреплённой оккупации этой страны' };
@@ -1187,6 +1739,24 @@ function performAction(world, player, message) {
       releaseOccupation(world, country, target, 'released');
       pushNews(world, `${meta.name} возвращает независимость государству ${targetMeta.name}. Оккупационный режим прекращён.`, 'green');
       return { ok: true, toast: 'Страна освобождена · репутация +6 · доверие +28' };
+    }
+    if (['autonomy','invest','exploit'].includes(message.id)) {
+      if (occupation.lastPolicyTurn === world.turn) return { ok: false, error: 'Политика оккупации уже менялась в этом квартале' };
+      if (message.id === 'autonomy') {
+        occupation.tributeRate = .06; occupation.resistance = clamp(round(occupation.resistance - 14, 1), 0, 100);
+        target.happiness = clamp(round(target.happiness + 5, 1), 0, 100); country.reputation = clamp(round(country.reputation + 2, 1), 0, 100);
+      }
+      if (message.id === 'invest') {
+        if (!spend(country, 25)) return { ok: false, error: 'Для восстановления региона нужно 25 млрд' };
+        target.treasury = round(target.treasury + 18, 1); target.infrastructure = clamp(round(target.infrastructure + 3, 1), 0, 100);
+        occupation.resistance = clamp(round(occupation.resistance - 12, 1), 0, 100); occupation.tributeRate = Math.min(occupation.tributeRate || .10, .10);
+      }
+      if (message.id === 'exploit') {
+        occupation.tributeRate = .16; occupation.resistance = clamp(round(occupation.resistance + 15, 1), 0, 100);
+        target.happiness = clamp(round(target.happiness - 6, 1), 0, 100); country.reputation = clamp(round(country.reputation - 4, 1), 0, 100);
+      }
+      occupation.lastPolicyTurn = world.turn;
+      return { ok: true, toast: message.id === 'autonomy' ? 'Автономия расширена · сопротивление падает, дань снижена' : message.id === 'invest' ? 'Начато восстановление оккупированной территории' : 'Дань повышена до 16% · риск восстания резко вырос' };
     }
     if (message.id === 'suppress') {
       if (occupation.revolt?.status !== 'active') return { ok: false, error: 'Вооружённого восстания сейчас нет' };
@@ -1340,8 +1910,10 @@ function performAction(world, player, message) {
   }
 
   if (message.action === 'intelligence' && message.id === 'operation') {
+    if (country.lastIntelTurn === world.turn) return { ok: false, error: 'Разведывательная сеть уже проводила операцию в этом квартале' };
     if (!spend(country, 12)) return { ok: false, error: 'Для операции нужно 12 млрд' };
-    const chance = clamp(38 + country.cyber * 0.55 - target.cyber * 0.32 + (technologyBonuses(country).intelPct || 0) * 100, 15, 92);
+    country.lastIntelTurn = world.turn;
+    const chance = clamp(38 + country.cyber * 0.55 - target.cyber * 0.32 + (technologyBonuses(country).intelPct || 0) * 100 + (advisorBonuses(country).intelPct || 0) * 100 - (advisorBonuses(target).counterIntel || 0), 15, 92);
     const roll = hashFloat(`${world.seed}:intel:${world.turn}:${country.code}:${target.code}`) * 100;
     if (roll <= chance) {
       const captured = Math.min(8, target.treasury);
@@ -1416,7 +1988,7 @@ function performAction(world, player, message) {
       country.atWar.push(target.code); target.atWar.push(country.code);
       changeRelation(world, country.code, target.code, -100);
       country.warScore ||= {}; target.warScore ||= {};
-      const war = { id: crypto.randomUUID(), kind: 'territorial', a: country.code, b: target.code, front: occupiedFront(world, country.code, target.code), status: 'active', startedAt: world.turn, startedAtMs: Date.now(), nextBattleAt: Date.now() + 900, battleTicks: 0, lastReportedMilestone: '', operations: 0, lastOperation: null, supporters: { a: [], b: [] }, operationsByTurn: {}, battles: [], casualties: { a: 0, b: 0 }, surgeCooldowns: { a: 0, b: 0 }, surge: null, weather: 'clear', weatherChangedAtTick: 0 };
+      const war = { id: crypto.randomUUID(), kind: 'territorial', a: country.code, b: target.code, front: occupiedFront(world, country.code, target.code), status: 'active', startedAt: world.turn, startedAtMs: Date.now(), nextBattleAt: Date.now() + 900, battleTicks: 0, lastReportedMilestone: '', operations: 0, lastOperation: null, supporters: { a: [], b: [] }, operationsByTurn: {}, battles: [], casualties: { a: 0, b: 0 }, surgeCooldowns: { a: 0, b: 0 }, surge: null, weather: 'clear', weatherChangedAtTick: 0, terrain: theaterTerrain(target.code) };
       world.wars.push(war);
       syncWarOccupation(world, war);
       country.warScore[target.code] = war.front; target.warScore[country.code] = -war.front;
@@ -1454,6 +2026,23 @@ function botTurn(world, country) {
     country.army.defense = clamp(country.army.defense + .5, 0, 100);
     country.lastAction = 'Армия укрепляет фронт и готовит оборону';
     return;
+  }
+  if (r < .07 && Object.values(country.advisors || {}).length < 3) {
+    const candidate = Object.entries(ADVISORS).find(([id,item]) => !Object.values(country.advisors).includes(id) && country.treasury >= item.cost);
+    if (candidate) {
+      const [id,item] = candidate; country.treasury = round(country.treasury - item.cost, 1); country.advisors[item.role] = id;
+      country.lastAction = `В правительство приглашён советник ${item.name}`;
+      return;
+    }
+  }
+  if (r < .13) {
+    const candidates = Object.entries(UNIT_PROGRAMS).filter(([,item]) => (!item.naval || !meta.landlocked) && country.treasury >= item.cost && Object.entries(item.resources).every(([id,value]) => country.resources[id] >= value));
+    const candidate = candidates[Math.floor(r * 10000) % Math.max(1, candidates.length)];
+    if (candidate) {
+      const [id,item] = candidate; spend(country,item.cost); spendResources(country,item.resources); country.units[id] = clamp(round(country.units[id] + item.gain,1),0,100);
+      country.lastAction = `Развёрнута программа «${item.name}»`;
+      return;
+    }
   }
   if (r < 0.18) {
     const availableTech = TECHNOLOGY_TREE.flatMap((branch) => branch.nodes)
@@ -1494,6 +2083,110 @@ function botTurn(world, country) {
     country.lastAction = 'Плановая модернизация вооружённых сил';
   } else {
     country.treasury += 3; country.lastAction = 'Формирование резервного фонда';
+  }
+}
+
+function advanceStrategicSystems(world) {
+  if (world.globalCrisis && world.turn > world.globalCrisis.endsAt) {
+    const ended = GLOBAL_CRISES.find((item) => item.id === world.globalCrisis.id);
+    if (ended) pushNews(world, `Мировой кризис «${ended.name}» завершён. Государства подсчитывают последствия.`, 'green');
+    world.crisisHistory.unshift({ ...world.globalCrisis, endedAt: world.turn });
+    world.crisisHistory = world.crisisHistory.slice(0, 12);
+    world.globalCrisis = null;
+  }
+  if (!world.globalCrisis && world.turn % 5 === 0) {
+    const recent = new Set(world.crisisHistory.slice(0, 2).map((item) => item.id));
+    const available = GLOBAL_CRISES.filter((item) => !recent.has(item.id));
+    const crisis = available[Math.floor(hashFloat(`${world.seed}:global-crisis:${world.turn}`) * available.length)] || GLOBAL_CRISES[0];
+    world.globalCrisis = { id: crisis.id, name: crisis.name, startedAt: world.turn, endsAt: world.turn + crisis.duration - 1 };
+    pushNews(world, `${crisis.icon} МИРОВОЙ КРИЗИС: ${crisis.name}. Каждое правительство должно выбрать собственный ответ.`, 'red');
+  }
+  const crisis = world.globalCrisis && GLOBAL_CRISES.find((item) => item.id === world.globalCrisis.id);
+
+  world.tradeOffers = world.tradeOffers.filter((offer) => world.turn - offer.createdAt <= 3);
+  world.allianceInvites = world.allianceInvites.filter((invite) => world.turn - invite.createdAt <= 4);
+  world.tradeRoutes = world.tradeRoutes.filter((route) => route.status !== 'closed' || world.turn - (route.closedAt || world.turn) <= 8);
+  for (const route of world.tradeRoutes) {
+    const seller = world.countries[route.from]; const buyer = world.countries[route.to];
+    if (!seller || !buyer || seller.eliminated || buyer.eliminated) { route.status = 'closed'; continue; }
+    const blocked = seller.atWar.includes(buyer.code) || seller.sanctions.includes(buyer.code) || buyer.sanctions.includes(seller.code);
+    if (blocked) { route.status = 'blocked'; continue; }
+    if ((seller.resources[route.resource] || 0) < route.amount || buyer.treasury < route.price) { route.status = 'paused'; continue; }
+    route.status = 'active';
+    seller.resources[route.resource] = round(seller.resources[route.resource] - route.amount, 1);
+    buyer.resources[route.resource] = clamp(round(buyer.resources[route.resource] + route.amount, 1), 0, 150);
+    buyer.treasury = round(buyer.treasury - route.price, 1);
+    const advisorTrade = advisorBonuses(seller).tradeIncome || 0;
+    seller.treasury = round(seller.treasury + route.price * .88 + advisorTrade, 1);
+    route.delivered = round((route.delivered || 0) + route.amount, 1); route.lastDeliveryTurn = world.turn;
+  }
+
+  for (const alliance of world.alliances) {
+    const upkeep = alliance.members.length * 2;
+    if (alliance.budget < upkeep) continue;
+    alliance.budget = round(alliance.budget - upkeep, 1);
+    for (const code of alliance.members) {
+      const member = world.countries[code]; if (!member || member.eliminated) continue;
+      member.influence = clamp(round(member.influence + .35, 2), 0, 100);
+      member.army.readiness = clamp(round(member.army.readiness + .3, 2), 0, 100);
+    }
+  }
+
+  for (const country of Object.values(world.countries)) {
+    if (country.eliminated || country.absorbedBy) continue;
+    const advisors = advisorBonuses(country);
+    for (const id of Object.keys(STRATEGIC_RESOURCES)) country.resources[id] = clamp(round(country.resources[id] + country.resourceProduction[id], 1), 0, 150);
+    const consumption = {
+      food: clamp(1.4 + country.population / 160, 1.5, 10) * (crisis?.modifiers?.foodUse || 1),
+      fuel: (1.2 + (country.atWar.length ? 3.8 : 0) + country.units.armor / 55 + country.units.airWings / 70) * (crisis?.modifiers?.fuelUse || 1),
+      metals: .7 + (country.activeProject ? 1.4 : 0),
+      rare: .35 + country.cyber / 180,
+      energy: (1.8 + country.industry / 28 + country.cyber / 65) * (crisis?.modifiers?.energyUse || 1)
+    };
+    const shortages = [];
+    for (const [id, amount] of Object.entries(consumption)) {
+      country.resources[id] = round(country.resources[id] - amount, 1);
+      if (country.resources[id] < 0) { shortages.push(id); country.resources[id] = 0; }
+    }
+    if (shortages.length) {
+      country.happiness = clamp(round(country.happiness - shortages.length * 1.4, 1), 0, 100);
+      country.stability = clamp(round(country.stability - shortages.length * .7, 1), 0, 100);
+      country.army.readiness = clamp(round(country.army.readiness - (shortages.includes('fuel') ? 2 : .4), 1), 0, 100);
+      country.lastShortage = { resources: shortages, turn: world.turn };
+    } else country.lastShortage = null;
+
+    if (crisis?.modifiers?.incomePct) country.treasury = round(Math.max(0, country.treasury + incomeFor(country) * crisis.modifiers.incomePct), 1);
+    if (crisis?.modifiers?.happinessPerTurn) country.happiness = clamp(round(country.happiness + crisis.modifiers.happinessPerTurn, 1), 0, 100);
+    if (crisis?.modifiers?.cyberPenalty) country.cyber = clamp(round(country.cyber - crisis.modifiers.cyberPenalty, 2), 0, 100);
+    country.stability = clamp(round(country.stability + (advisors.stabilityPerTurn || 0), 2), 0, 100);
+    country.influence = clamp(round(country.influence + (advisors.influencePerTurn || 0), 2), 0, 100);
+
+    const routes = world.tradeRoutes.filter((route) => route.status === 'active' && (route.from === country.code || route.to === country.code)).length;
+    country.factions.people = clamp(round(country.factions.people + clamp((country.happiness - 58) / 32 - Math.max(0, country.taxRate - 29) / 22, -2.5, 2.2), 1), 0, 100);
+    country.factions.business = clamp(round(country.factions.business + clamp((country.industry - 48) / 65 + routes * .18 - (country.atWar.length ? .6 : 0), -2, 2.3), 1), 0, 100);
+    country.factions.military = clamp(round(country.factions.military + clamp((country.army.readiness - 52) / 60 + (country.atWar.length ? .25 : 0), -1.8, 2), 1), 0, 100);
+    country.factions.elites = clamp(round(country.factions.elites + clamp((country.stability - 58) / 70, -1.5, 1.5), 1), 0, 100);
+    const oppositionChange = clamp((55 - country.happiness) / 30 + (55 - country.stability) / 32 + country.warExhaustion / 95 + Math.max(0, country.taxRate - 30) / 18 - (advisors.oppositionControl || 0), -2, 4);
+    country.factions.opposition = clamp(round(country.factions.opposition + oppositionChange, 1), 0, 100);
+    country.media.credibility = clamp(round(country.media.credibility + (country.lastMediaTurn === world.turn ? 0 : .25) - country.media.propaganda / 500, 1), 0, 100);
+    country.media.propaganda = clamp(round(country.media.propaganda - .5, 1), 0, 100);
+    country.media.warSupport = clamp(round(country.media.warSupport + (country.atWar.length ? -country.warExhaustion / 90 : (50 - country.media.warSupport) * .08), 1), 0, 100);
+
+    if (country.factions.opposition >= 80 && !country.politicalCrisis) {
+      country.politicalCrisis = { id: country.factions.opposition >= 92 ? 'coup_risk' : 'mass_protests', startedAt: world.turn };
+      country.stability = clamp(round(country.stability - 7, 1), 0, 100);
+      pushNews(world, `${CATALOG_BY_CODE[country.code].name}: массовые протесты перерастают в острый политический кризис.`, 'red');
+    }
+    if (country.isBot && country.politicalCrisis) {
+      country.factions.opposition = clamp(round(country.factions.opposition - 16, 1), 0, 100);
+      country.stability = clamp(round(country.stability + 3, 1), 0, 100);
+      country.treasury = round(Math.max(0, country.treasury - 18), 1); country.politicalCrisis = null;
+    }
+    if (country.isBot && crisis && !country.crisisChoices[crisis.id]) {
+      const choices = crisis.options.filter((option) => (!option.cost || country.treasury >= option.cost) && Object.entries(option.resources || {}).every(([id,value]) => value >= 0 || country.resources[id] >= Math.abs(value)));
+      const option = choices[Math.floor(hashFloat(`${world.seed}:bot-crisis:${world.turn}:${country.code}`) * Math.max(1, choices.length))];
+      if (option) { if (option.cost) spend(country, option.cost); applyStrategicEffects(country, option); country.crisisChoices[crisis.id] = { option: option.id, turn: world.turn }; }
+    }
   }
 }
 
@@ -1570,10 +2263,12 @@ function advanceTurn(world) {
     }
     if (country.isBot) botTurn(world, country);
   }
+  advanceStrategicSystems(world);
   for (const occupied of Object.values(world.countries)) {
     const controller = world.countries[occupied.occupation?.by];
     if (!controller || controller.eliminated || occupied.eliminated || !occupied.occupation?.permanent || occupied.occupation?.absorbed || occupied.occupation?.revolt || !occupied.occupation?.percent) continue;
-    const tribute = round(Math.min(occupied.treasury, incomeFor(occupied) * occupied.occupation.percent / 100 * .10), 1);
+    const tributeRate = clamp(occupied.occupation.tributeRate ?? .10, .04, .18);
+    const tribute = round(Math.min(occupied.treasury, incomeFor(occupied) * occupied.occupation.percent / 100 * tributeRate), 1);
     if (tribute <= 0) continue;
     occupied.treasury = round(occupied.treasury - tribute, 1);
     controller.treasury = round(controller.treasury + tribute, 1);
@@ -1582,6 +2277,15 @@ function advanceTurn(world) {
   if (world.turn % 3 === 0) pushNews(world, `Мировая экономика завершила ${world.quarter} квартал ${world.year} года. Дипломатия остаётся главным инструментом держав.`, 'blue');
   world.nextTurnAt = Date.now() + 60000;
   calculateScores(world);
+  for (const country of Object.values(world.countries)) {
+    if (country.eliminated || country.victoryAchieved || country.victoryProgress < 100) continue;
+    country.victoryAchieved = true;
+    country.influence = clamp(round(country.influence + 12, 1), 0, 100);
+    country.reputation = clamp(round(country.reputation + 8, 1), 0, 100);
+    world.hallOfFame.unshift({ code: country.code, path: country.victoryPath, turn: world.turn, year: world.year, quarter: world.quarter });
+    world.hallOfFame = world.hallOfFame.slice(0, 20);
+    pushNews(world, `${CATALOG_BY_CODE[country.code].flag} ${CATALOG_BY_CODE[country.code].name} достигает стратегической победы: «${VICTORY_PATHS[country.victoryPath].name}». Мир вступает в новую эпоху соперничества.`, 'gold');
+  }
 }
 
 function ranking(world) {
@@ -1594,6 +2298,7 @@ function ranking(world) {
 
 module.exports = {
   CATALOG, CATALOG_BY_CODE, DEVELOPMENT_ACTIONS, MILITARY_ACTIONS, BATTLE_TACTICS, MILITARY_DOCTRINES, TECHNOLOGY_TREE, NATIONAL_PROJECTS, DECISIONS, STEALABLE_ASSETS, PLAYER_NEWS_CATEGORIES,
+  STRATEGIC_RESOURCES, POLITICAL_FACTIONS, ADVISORS, UNIT_PROGRAMS, GLOBAL_CRISES, VICTORY_PATHS, WAR_TERRAINS,
   createWorld, migrateWorld, selectCountry, performAction, advanceTurn, advanceWars, advanceResistance, calculateScores,
-  getRelation, incomeFor, militaryPower, ranking, clamp, technologyBonuses, theftChance, hostileCooldownRemaining
+  getRelation, incomeFor, militaryPower, ranking, clamp, technologyBonuses, theftChance, hostileCooldownRemaining, politicalSupport
 };
