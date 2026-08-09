@@ -5,6 +5,7 @@ const crypto = require('node:crypto');
 const zlib = require('node:zlib');
 const { WebSocketServer, WebSocket } = require('ws');
 const topojson = require('topojson-client');
+const { resumeHash, recoverRoomState } = require('./recovery');
 const {
   CATALOG, CATALOG_BY_CODE, DEVELOPMENT_ACTIONS, MILITARY_ACTIONS, BATTLE_TACTICS, MILITARY_DOCTRINES, TECHNOLOGY_TREE, NATIONAL_PROJECTS, DECISIONS, STEALABLE_ASSETS,
   createWorld, migrateWorld, selectCountry, performAction, advanceTurn, advanceWars, advanceResistance, calculateScores, getRelation, ranking
@@ -39,7 +40,7 @@ function send(socket, payload) {
 function safeRoom(room) {
   return {
     code: room.code, createdAt: room.createdAt, updatedAt: Date.now(), hostId: room.hostId,
-    players: room.players.map(({ id, token, name, countryCode, joinedAt }) => ({ id, token, name, countryCode, joinedAt })),
+    players: room.players.map(({ id, token, resumeHash: hash, name, countryCode, joinedAt }) => ({ id, token, resumeHash: hash || resumeHash(token), name, countryCode, joinedAt })),
     world: room.world
   };
 }
@@ -55,6 +56,7 @@ function loadRooms() {
     try {
       const room = JSON.parse(fs.readFileSync(path.join(SAVE_DIR, file), 'utf8'));
       room.connections = new Map();
+      for (const player of room.players || []) player.resumeHash ||= resumeHash(player.token);
       migrateWorld(room.world);
       room.world.nextTurnAt = Math.max(Date.now() + 5000, room.world.nextTurnAt || 0);
       if (room.world?.countries && room.players) rooms.set(room.code, room);
@@ -93,8 +95,8 @@ function publicState(room, viewerId) {
     ? Object.fromEntries(CATALOG.filter((c) => c.code !== viewerCode).map((c) => [c.code, getRelation(room.world, viewerCode, c.code)]))
     : {};
   return {
-    type: 'state', roomCode: room.code, viewerId, isHost: room.hostId === viewerId,
-    players: room.players.map((p) => ({ id: p.id, name: p.name, countryCode: p.countryCode, connected: room.connections.has(p.id) })),
+    type: 'state', roomCode: room.code, viewerId, hostId: room.hostId, createdAt: room.createdAt, isHost: room.hostId === viewerId, recoveryVersion: 1,
+    players: room.players.map((p) => ({ id: p.id, name: p.name, countryCode: p.countryCode, joinedAt: p.joinedAt, resumeHash: p.resumeHash || resumeHash(p.token), connected: room.connections.has(p.id) })),
     catalog: CATALOG,
     world: room.world,
     relations,
@@ -134,18 +136,36 @@ function welcome(socket, room, player, resumed) {
 
 function hello(socket, message) {
   const action = message.action === 'create' ? 'create' : 'join';
-  const room = action === 'create' ? createRoom() : rooms.get(cleanCode(message.roomCode));
-  if (!room) return send(socket, { type: 'error', message: 'Комната не найдена. Проверьте шестизначный код.' });
-
   const requestedToken = String(message.playerToken || '').slice(0, 80);
-  let player = requestedToken ? room.players.find((p) => p.token === requestedToken) : null;
+  const roomCode = cleanCode(message.roomCode);
+  let room = action === 'create' ? createRoom() : rooms.get(roomCode);
+  if (!room && action === 'join' && message.recovery) {
+    try {
+      room = recoverRoomState({ code: roomCode, snapshot: message.recovery, requestedToken, catalogCodes: new Set(CATALOG.map((country) => country.code)) });
+      room.connections = new Map();
+      migrateWorld(room.world);
+      rooms.set(room.code, room);
+      saveRoom(room);
+      console.log(`Комната ${room.code} восстановлена из браузерной копии игрока ${room.recoveredBy}`);
+    } catch (error) {
+      return send(socket, { type: 'error', message: `Не удалось восстановить комнату: ${error.message}` });
+    }
+  }
+  if (!room) return send(socket, { type: 'error', code: 'ROOM_MISSING', roomCode, message: 'Комната исчезла после перезапуска сервера. Ищем резервную копию на этом устройстве…' });
+
+  let player = requestedToken ? room.players.find((item) => item.token === requestedToken || item.resumeHash === resumeHash(requestedToken)) : null;
   const resumed = Boolean(player);
   if (!player) {
     if (room.players.length >= 24) return send(socket, { type: 'error', message: 'В этой комнате уже 24 игрока.' });
-    player = { id: crypto.randomUUID(), token: crypto.randomBytes(24).toString('hex'), name: cleanName(message.name), countryCode: null, joinedAt: Date.now() };
+    const token = crypto.randomBytes(24).toString('hex');
+    player = { id: crypto.randomUUID(), token, resumeHash: resumeHash(token), name: cleanName(message.name), countryCode: null, joinedAt: Date.now() };
     room.players.push(player);
     if (!room.hostId) room.hostId = player.id;
-  } else if (message.name) player.name = cleanName(message.name);
+  } else {
+    player.token = requestedToken;
+    player.resumeHash = resumeHash(requestedToken);
+    if (message.name) player.name = cleanName(message.name);
+  }
   welcome(socket, room, player, resumed);
 }
 
@@ -193,7 +213,7 @@ function serve(request, response) {
 
 loadRooms();
 const server = http.createServer(serve);
-const wss = new WebSocketServer({ server, maxPayload: 64 * 1024 });
+const wss = new WebSocketServer({ server, maxPayload: 2 * 1024 * 1024 });
 wss.on('connection', (socket) => {
   socket.on('message', (raw) => handleMessage(socket, raw));
   socket.on('close', () => {

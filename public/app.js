@@ -16,7 +16,9 @@ const app = {
   connectionTimer: null,
   connection: null,
   visualOccupations: {},
-  warRenderStep: 0
+  warRenderStep: 0,
+  recoveryTimer: null,
+  lastRecoverySave: 0
 };
 
 const PUBLIC_GAME_URL = 'https://world-order-game.onrender.com';
@@ -85,6 +87,37 @@ function toast(message, error = false) {
   setTimeout(() => element.remove(), 3600);
 }
 
+function recoveryKey(roomCode) { return `world-order-recovery:${String(roomCode || '').toUpperCase()}`; }
+function loadRecovery(roomCode) {
+  try {
+    const snapshot=JSON.parse(localStorage.getItem(recoveryKey(roomCode))||'null');
+    return snapshot?.version===1&&snapshot.roomCode===String(roomCode||'').toUpperCase()?snapshot:null;
+  } catch { return null; }
+}
+function saveRecoverySnapshot() {
+  const state=app.state;
+  if(!state?.roomCode||!state.world||!state.players?.length||state.players.some((player)=>!/^[a-f0-9]{64}$/.test(player.resumeHash||'')))return;
+  const snapshot={
+    version:1,roomCode:state.roomCode,createdAt:state.createdAt,hostId:state.hostId,savedAt:state.savedAt||Date.now(),clientSavedAt:Date.now(),
+    players:state.players.map(({id,name,countryCode,joinedAt,resumeHash})=>({id,name,countryCode,joinedAt,resumeHash})),
+    world:state.world
+  };
+  const key=recoveryKey(state.roomCode);const serialized=JSON.stringify(snapshot);
+  try{localStorage.setItem(key,serialized)}catch{
+    for(const storedKey of Object.keys(localStorage).filter((item)=>item.startsWith('world-order-recovery:')&&item!==key))localStorage.removeItem(storedKey);
+    try{localStorage.setItem(key,serialized)}catch{toast('Браузер не смог сохранить резервную копию мира',true)}
+  }
+  app.lastRecoverySave=Date.now();
+}
+function scheduleRecoverySave() {
+  if(app.recoveryTimer)return;
+  const delay=Math.max(400,6000-(Date.now()-app.lastRecoverySave));
+  app.recoveryTimer=setTimeout(()=>{
+    app.recoveryTimer=null;
+    if('requestIdleCallback'in window)requestIdleCallback(saveRecoverySnapshot,{timeout:1800});else setTimeout(saveRecoverySnapshot,0);
+  },delay);
+}
+
 function setConnected(connected) {
   const status = $('#connectionStatus');
   status.classList.toggle('offline', !connected);
@@ -131,7 +164,7 @@ function connect(connection) {
       showGame();
       if (message.resumed) toast('Сохранённая сессия восстановлена');
     }
-    if (message.type === 'state') { app.state = message; render(); }
+    if (message.type === 'state') { app.state = message; render(); scheduleRecoverySave(); }
     if ((message.type === 'warTick' || message.type === 'worldDelta') && app.state) {
       for (const [code, state] of Object.entries(message.countries || {})) app.state.world.countries[code] = state;
       for (const changedWar of message.wars || []) {
@@ -146,6 +179,21 @@ function connect(connection) {
       app.warRenderStep += 1;
       if (app.warRenderStep % 4 === 0 && ['overview','military','rating'].includes(app.activeTab)) renderPanel();
       music.setMode(myCountry()?.atWar?.length || myCountry()?.supportingWarId ? 'war' : 'calm');
+      scheduleRecoverySave();
+    }
+    if (message.type === 'roomMissing' || (message.type === 'error' && message.code === 'ROOM_MISSING')) {
+      clearTimeout(app.connectionTimer);
+      const roomCode=message.roomCode||app.connection?.roomCode;
+      const recovery=loadRecovery(roomCode);
+      if(recovery&&!app.connection?.recoveryAttempted){
+        toast('Сервер перезапускался — восстанавливаем сохранённый мир…');
+        return connect({...app.connection,roomCode,recovery,recoveryAttempted:true});
+      }
+      setEntryBusy(false);
+      const explanation=recovery?'Резервная копия не прошла восстановление.':'На этом устройстве нет резервной копии этой комнаты.';
+      $('#landingError').textContent=`${message.message} ${explanation}`;
+      toast(`${message.message} ${explanation}`,true);
+      return;
     }
     if (message.type === 'toast') toast(message.message);
     if (message.type === 'error') {
@@ -160,7 +208,7 @@ function connect(connection) {
       clearTimeout(app.connectionTimer); setEntryBusy(false);
       if (!$('#landingError').textContent) $('#landingError').textContent = 'Соединение не установлено. Проверьте интернет и адрес сайта.';
     }
-    if (event.code !== 4001 && !$('#game').classList.contains('hidden')) {
+    if (socket === app.socket && event.code !== 4001 && !$('#game').classList.contains('hidden')) {
       app.reconnectTimer = setTimeout(() => connect(app.connection), 1800);
     }
   });
