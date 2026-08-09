@@ -671,47 +671,81 @@ $('#techTree').addEventListener('click', (event) => {
 });
 
 class MusicEngine {
-  constructor() { this.context = null; this.master = null; this.timer = null; this.enabled = false; this.mode = 'calm'; this.step = 0; }
+  constructor() { this.context = null; this.master = null; this.compressor = null; this.timer = null; this.enabled = false; this.mode = 'calm'; this.step = 0; this.volume = .3; }
   async start() {
-    if (this.enabled) return;
     try {
       this.context ||= new (window.AudioContext || window.webkitAudioContext)();
       await this.context.resume();
-      this.master ||= this.context.createGain();
-      this.master.connect(this.context.destination);
+      if (this.context.state !== 'running') throw new Error('AudioContext suspended');
+      if (!this.master) {
+        this.master = this.context.createGain();
+        this.master.gain.value = 0;
+        this.compressor = this.context.createDynamicsCompressor();
+        this.compressor.threshold.value = -18;
+        this.compressor.knee.value = 18;
+        this.compressor.ratio.value = 4;
+        this.compressor.attack.value = .02;
+        this.compressor.release.value = .3;
+        this.master.connect(this.compressor);
+        this.compressor.connect(this.context.destination);
+      }
       this.master.gain.cancelScheduledValues(this.context.currentTime);
-      this.master.gain.setTargetAtTime(.075, this.context.currentTime, .5);
-      this.enabled = true; $('#musicToggle').classList.add('active'); $('#musicToggle').title = 'Выключить музыку';
+      this.master.gain.setValueAtTime(this.master.gain.value, this.context.currentTime);
+      this.master.gain.linearRampToValueAtTime(this.volume, this.context.currentTime + .35);
+      if (this.enabled && this.timer) return;
+      this.enabled = true;
+      $('#musicToggle').classList.add('active');
+      $('#musicToggle').title = 'Выключить музыку';
+      $('#musicToggle small').textContent = 'ЗВУК ВКЛ';
       this.schedule();
-    } catch { toast('Браузер не разрешил воспроизведение музыки', true); }
+    } catch {
+      this.enabled = false;
+      toast('Firefox заблокировал звук. Нажмите значок ♪ ещё раз и разрешите аудио для сайта.', true);
+    }
   }
   stop() {
     this.enabled = false; clearInterval(this.timer); this.timer = null;
     if (this.master && this.context) this.master.gain.setTargetAtTime(0, this.context.currentTime, .18);
-    $('#musicToggle').classList.remove('active'); $('#musicToggle').title = 'Включить музыку'; $('#musicNow').classList.add('hidden');
+    $('#musicToggle').classList.remove('active'); $('#musicToggle').title = 'Включить музыку'; $('#musicToggle small').textContent = 'МУЗЫКА'; $('#musicNow').classList.add('hidden');
   }
-  tone(frequency, duration, volume, type = 'sine', delay = 0) {
+  tone(frequency, duration, volume, type = 'sine', delay = 0, pan = 0) {
     if (!this.enabled || !this.context) return;
     const now = this.context.currentTime + delay; const oscillator = this.context.createOscillator(); const gain = this.context.createGain();
     oscillator.type = type; oscillator.frequency.setValueAtTime(frequency, now);
-    gain.gain.setValueAtTime(.0001, now); gain.gain.exponentialRampToValueAtTime(Math.max(.0002, volume), now + Math.min(.35, duration * .22)); gain.gain.exponentialRampToValueAtTime(.0001, now + duration);
-    oscillator.connect(gain); gain.connect(this.master); oscillator.start(now); oscillator.stop(now + duration + .05);
+    gain.gain.setValueAtTime(.0001, now); gain.gain.exponentialRampToValueAtTime(Math.max(.0002, volume), now + Math.min(.45, duration * .2)); gain.gain.exponentialRampToValueAtTime(.0001, now + duration);
+    oscillator.connect(gain);
+    if (this.context.createStereoPanner) { const panner=this.context.createStereoPanner(); panner.pan.value=pan; gain.connect(panner); panner.connect(this.master); }
+    else gain.connect(this.master);
+    oscillator.start(now); oscillator.stop(now + duration + .05);
   }
   kick(delay = 0) {
     if (!this.enabled || !this.context) return;
     const now = this.context.currentTime + delay; const oscillator = this.context.createOscillator(); const gain = this.context.createGain();
-    oscillator.frequency.setValueAtTime(115, now); oscillator.frequency.exponentialRampToValueAtTime(43, now + .18);
-    gain.gain.setValueAtTime(.16, now); gain.gain.exponentialRampToValueAtTime(.0001, now + .34); oscillator.connect(gain); gain.connect(this.master); oscillator.start(now); oscillator.stop(now + .36);
+    oscillator.frequency.setValueAtTime(135, now); oscillator.frequency.exponentialRampToValueAtTime(45, now + .2);
+    gain.gain.setValueAtTime(.32, now); gain.gain.exponentialRampToValueAtTime(.0001, now + .38); oscillator.connect(gain); gain.connect(this.master); oscillator.start(now); oscillator.stop(now + .4);
+  }
+  drum(duration = .16, volume = .09, delay = 0) {
+    if (!this.enabled || !this.context) return;
+    const length = Math.floor(this.context.sampleRate * duration); const buffer = this.context.createBuffer(1, length, this.context.sampleRate); const data = buffer.getChannelData(0);
+    for (let index=0;index<length;index+=1) data[index]=(Math.random()*2-1)*(1-index/length);
+    const source=this.context.createBufferSource(); const filter=this.context.createBiquadFilter(); const gain=this.context.createGain(); const now=this.context.currentTime+delay;
+    source.buffer=buffer; filter.type='bandpass'; filter.frequency.value=1100; filter.Q.value=.75; gain.gain.setValueAtTime(volume,now); gain.gain.exponentialRampToValueAtTime(.0001,now+duration);
+    source.connect(filter); filter.connect(gain); gain.connect(this.master); source.start(now);
   }
   calmPhrase() {
-    const chords = [[110,164.81,220],[98,146.83,196],[130.81,196,261.63],[87.31,130.81,174.61]];
-    const chord = chords[this.step++ % chords.length]; chord.forEach((note, index) => this.tone(note, 4.8, .035 - index * .004, index ? 'sine' : 'triangle', index * .08));
-    this.tone(chord[1] * 2, 2.6, .015, 'sine', .7);
+    const chords = [[130.81,164.81,196,246.94],[110,146.83,164.81,220],[98,130.81,164.81,196],[116.54,146.83,174.61,233.08]];
+    const melodies = [[392,329.63,293.66],[329.63,293.66,246.94],[261.63,329.63,392],[349.23,293.66,261.63]];
+    const index=this.step++%chords.length; const chord=chords[index];
+    this.tone(chord[0]/2,5.4,.1,'triangle',0,-.12);
+    chord.forEach((note,noteIndex)=>this.tone(note,5.2,.065-noteIndex*.006,noteIndex%2?'sine':'triangle',noteIndex*.09,-.55+noteIndex*.36));
+    melodies[index].forEach((note,noteIndex)=>this.tone(note,1.5,.045,'sine',.55+noteIndex*1.15,noteIndex%2?.35:-.28));
   }
   warPhrase() {
-    const bass = [55,55,65.41,49][this.step % 4]; this.kick(); this.tone(bass, .55, .07, 'sawtooth');
-    this.tone(bass * [2,3,2.5,3][this.step % 4], .28, .024, 'square', .12);
-    if (this.step % 4 === 2) { this.kick(.28); this.tone(bass * 4, .7, .028, 'triangle', .2); }
+    const bass = [55,55,65.41,49][this.step % 4]; this.kick(); this.tone(bass,.58,.12,'sawtooth',0,-.1);
+    this.tone(bass*[2,3,2.5,3][this.step%4],.34,.055,'square',.1,.2);
+    if (this.step%2===1) this.drum(.2,.13,.18);
+    if (this.step%4===2) { this.kick(.3); this.tone(bass*4,.85,.07,'triangle',.2,.4); }
+    if (this.step%8===7) [bass*4,bass*5,bass*6].forEach((note,index)=>this.tone(note,1.4,.06,'sawtooth',index*.12,-.35+index*.35));
     this.step++;
   }
   schedule() {
@@ -720,12 +754,13 @@ class MusicEngine {
     now.querySelector('b').textContent = this.mode === 'war' ? 'Надвигается буря' : 'Спокойствие мира';
     if (this.mode === 'war') now.classList.add('war');
     const tick = () => this.mode === 'war' ? this.warPhrase() : this.calmPhrase(); tick();
-    this.timer = setInterval(tick, this.mode === 'war' ? 620 : 4300);
+    this.timer = setInterval(tick, this.mode === 'war' ? 620 : 4100);
   }
   setMode(mode) { if (this.mode === mode) return; this.mode = mode; if (this.enabled) this.schedule(); }
 }
 const music = new MusicEngine();
 $('#musicToggle').addEventListener('click', () => music.enabled ? music.stop() : music.start());
+document.addEventListener('pointerdown', () => { if (music.enabled && music.context?.state === 'suspended') music.start(); }, { capture:true });
 
 function render() {
   const player = me();
