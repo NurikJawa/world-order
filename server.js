@@ -7,7 +7,7 @@ const { WebSocketServer, WebSocket } = require('ws');
 const topojson = require('topojson-client');
 const {
   CATALOG, CATALOG_BY_CODE, DEVELOPMENT_ACTIONS, MILITARY_ACTIONS, BATTLE_TACTICS, MILITARY_DOCTRINES, TECHNOLOGY_TREE, NATIONAL_PROJECTS, DECISIONS, STEALABLE_ASSETS,
-  createWorld, migrateWorld, selectCountry, performAction, advanceTurn, advanceWars, calculateScores, getRelation, ranking
+  createWorld, migrateWorld, selectCountry, performAction, advanceTurn, advanceWars, advanceResistance, calculateScores, getRelation, ranking
 } = require('./game');
 
 const PORT = Number(process.env.PORT) || 3080;
@@ -108,15 +108,19 @@ function broadcast(room) {
   for (const [playerId, socket] of room.connections) send(socket, publicState(room, playerId));
 }
 
-function broadcastWarTick(room, outcome) {
-  const payload = {
-    type: 'warTick', at: Date.now(), savedAt: room.updatedAt,
+function broadcastWorldDelta(room, outcome) {
+  const basePayload = {
+    type: 'worldDelta', at: Date.now(), savedAt: room.updatedAt,
     wars: outcome.wars.map((id) => room.world.wars.find((war) => war.id === id)).filter(Boolean),
     countries: Object.fromEntries(outcome.countries.map((code) => [code, room.world.countries[code]]).filter(([, country]) => country)),
     news: room.world.news,
     ranking: ranking(room.world)
   };
-  for (const socket of room.connections.values()) send(socket, payload);
+  for (const [playerId, socket] of room.connections) {
+    const viewerCode = room.players.find((player) => player.id === playerId)?.countryCode;
+    const relations = viewerCode ? Object.fromEntries(CATALOG.filter((item) => item.code !== viewerCode).map((item) => [item.code, getRelation(room.world, viewerCode, item.code)])) : {};
+    send(socket, { ...basePayload, relations });
+  }
 }
 
 function welcome(socket, room, player, resumed) {
@@ -203,13 +207,26 @@ setInterval(() => {
   const now = Date.now();
   for (const room of rooms.values()) {
     if (room.world.nextTurnAt <= now) { advanceTurn(room.world); saveRoom(room); broadcast(room); continue; }
-    if (!room.world.wars?.some((war) => war.status === 'active')) continue;
-    const outcome = advanceWars(room.world, now);
+    const hasWar = room.world.wars?.some((war) => war.status === 'active');
+    const hasOccupation = Object.values(room.world.countries || {}).some((country) => country.occupation?.permanent && !country.occupation.absorbed);
+    if (!hasWar && !hasOccupation) continue;
+    const warOutcome = hasWar ? advanceWars(room.world, now) : { changed: false, wars: [], countries: [], ended: false };
+    let resistanceOutcome = { changed: false, wars: [], countries: [], ended: false };
+    if (hasOccupation && now >= (room.nextResistanceSweepAt || 0)) {
+      resistanceOutcome = advanceResistance(room.world, now);
+      room.nextResistanceSweepAt = now + 2000;
+    }
+    const outcome = {
+      changed: warOutcome.changed || resistanceOutcome.changed,
+      wars: [...new Set([...(warOutcome.wars || []), ...(resistanceOutcome.wars || [])])],
+      countries: [...new Set([...(warOutcome.countries || []), ...(resistanceOutcome.countries || [])])],
+      ended: warOutcome.ended || resistanceOutcome.ended
+    };
     if (!outcome.changed) continue;
     room.updatedAt = now;
     room.warTicksSinceSave = (room.warTicksSinceSave || 0) + 1;
     if (outcome.ended || room.warTicksSinceSave >= 5) { saveRoom(room); room.warTicksSinceSave = 0; }
-    broadcastWarTick(room, outcome);
+    broadcastWorldDelta(room, outcome);
   }
 }, 500).unref();
 

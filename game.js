@@ -73,6 +73,14 @@ const BATTLE_TACTICS = {
 };
 
 const WAR_TICK_MS = 1400;
+const HOSTILE_COOLDOWN_MS = 120000;
+const WAR_WEATHER = {
+  clear: { name: 'Ясная погода', icon: '☀', power: 1, capture: 1, supply: 1 },
+  rain: { name: 'Ливни', icon: '☂', power: .96, capture: .84, supply: 1.12 },
+  mud: { name: 'Распутица', icon: '≈', power: .9, capture: .66, supply: 1.24 },
+  snow: { name: 'Снегопад', icon: '❄', power: .92, capture: .76, supply: 1.18 },
+  storm: { name: 'Штормовой фронт', icon: 'ϟ', power: .86, capture: .58, supply: 1.3 }
+};
 
 const MILITARY_DOCTRINES = {
   balanced: { name: 'Сбалансированная доктрина', description: 'Без штрафов и узкой специализации.', attack: 1, defense: 1, capture: 1, casualties: 1 },
@@ -254,6 +262,9 @@ function initialCountry(meta, seed) {
     vault: initialVault(seed, meta.code),
     stolenItems: [],
     lastTheftTurn: null,
+    lastHostileActionAt: 0,
+    absorbedBy: null,
+    eliminated: false,
     army: {
       manpower: Math.round(clamp(population * (0.32 + r * 0.38), 4, 520)),
       reserve: Math.round(clamp(population * (0.9 + r), 8, 999)),
@@ -342,6 +353,15 @@ function migrateWorld(world) {
     for (const id of Object.keys(STEALABLE_ASSETS)) country.vault[id] ??= 1;
     country.stolenItems ||= [];
     country.lastTheftTurn ??= null;
+    country.lastHostileActionAt ??= 0;
+    country.absorbedBy ??= country.defeated && country.controllerCode && country.occupation?.percent >= 100 ? country.controllerCode : null;
+    country.eliminated ??= Boolean(country.absorbedBy);
+    if (country.occupation) {
+      country.occupation.resistance ??= round(clamp(12 + country.occupation.percent * .28, 8, 70), 1);
+      country.occupation.resistanceChecks ??= 0;
+      country.occupation.nextResistanceAt ??= Date.now() + 12000;
+      country.occupation.revolt ??= null;
+    }
   }
   for (const war of world.wars) {
     war.supporters ||= { a: [], b: [] };
@@ -352,6 +372,11 @@ function migrateWorld(world) {
     war.battleTicks ??= 0;
     war.nextBattleAt ??= Date.now() + 900;
     war.lastReportedMilestone ??= '';
+    war.kind ??= 'territorial';
+    war.surgeCooldowns ||= { a: 0, b: 0 };
+    war.surge ??= null;
+    war.weather ??= 'clear';
+    war.weatherChangedAtTick ??= 0;
   }
   const activePairs = new Set(world.wars.filter((war) => war.status === 'active').map((war) => relationKey(war.a, war.b)));
   for (const country of Object.values(world.countries || {})) {
@@ -392,15 +417,31 @@ function occupiedFront(world, a, b) {
   return 0;
 }
 
+function occupationSnapshot(previous, by, percent, war) {
+  const sameController = previous?.by === by;
+  return {
+    ...(sameController ? previous : {}),
+    by,
+    percent: round(percent, 1),
+    permanent: false,
+    warId: war.id,
+    resistance: sameController ? (previous.resistance ?? 18) : round(clamp(10 + percent * .24, 8, 48), 1),
+    resistanceChecks: sameController ? (previous.resistanceChecks || 0) : 0,
+    nextResistanceAt: sameController ? (previous.nextResistanceAt || Date.now() + 12000) : Date.now() + 12000,
+    revolt: sameController ? (previous.revolt || null) : null
+  };
+}
+
 function syncWarOccupation(world, war) {
   const first = world.countries[war.a]; const second = world.countries[war.b];
   if (!first || !second) return;
+  const firstOccupation = first.occupation; const secondOccupation = second.occupation;
   if (first.occupation?.by === war.b) first.occupation = null;
   if (second.occupation?.by === war.a) second.occupation = null;
   if (first.controllerCode === second.code && war.front > -100) { first.controllerCode = null; first.defeated = false; }
   if (second.controllerCode === first.code && war.front < 100) { second.controllerCode = null; second.defeated = false; }
-  if (war.front > 0) second.occupation = { by: war.a, percent: round(war.front, 1), permanent: false, warId: war.id };
-  if (war.front < 0) first.occupation = { by: war.b, percent: round(-war.front, 1), permanent: false, warId: war.id };
+  if (war.front > 0) second.occupation = occupationSnapshot(secondOccupation, war.a, war.front, war);
+  if (war.front < 0 && war.kind !== 'uprising') first.occupation = occupationSnapshot(firstOccupation, war.b, -war.front, war);
 }
 
 function endWar(world, war, status = 'peace') {
@@ -420,6 +461,24 @@ function endWar(world, war, status = 'peace') {
   }
 }
 
+function releaseOccupation(world, controller, subject, reason = 'released') {
+  if (!controller || !subject) return;
+  subject.occupation = null;
+  subject.controllerCode = null;
+  subject.absorbedBy = null;
+  subject.eliminated = false;
+  subject.defeated = false;
+  subject.stability = clamp(round(subject.stability + 8, 1), 0, 100);
+  subject.happiness = clamp(round(subject.happiness + 10, 1), 0, 100);
+  subject.army.morale = clamp(round(subject.army.morale + 12, 1), 0, 100);
+  controller.annexed = (controller.annexed || []).filter((code) => code !== subject.code);
+  if (reason === 'released') {
+    controller.reputation = clamp(round(controller.reputation + 6, 1), 0, 100);
+    controller.influence = clamp(round(controller.influence + 3, 1), 0, 100);
+    changeRelation(world, controller.code, subject.code, 28);
+  }
+}
+
 function annexCountry(world, war, winner, loser) {
   war.front = winner.code === war.a ? 100 : -100;
   syncWarOccupation(world, war);
@@ -432,7 +491,26 @@ function annexCountry(world, war, winner, loser) {
   if (firstAnnexation) loser.gdp = round(Math.max(1, loser.gdp * .72), 1);
   loser.controllerCode = winner.code;
   loser.defeated = true;
+  loser.absorbedBy = winner.code;
+  loser.eliminated = true;
+  loser.occupation = {
+    by: winner.code, percent: 100, permanent: true, absorbed: true, warId: war.id,
+    resistance: 0, resistanceChecks: 0, nextResistanceAt: 0, revolt: null
+  };
   if (!winner.annexed.includes(loser.code)) winner.annexed.push(loser.code);
+  for (const territory of Object.values(world.countries)) {
+    if (territory.code === loser.code) continue;
+    if (territory.absorbedBy === loser.code) {
+      territory.absorbedBy = winner.code;
+      territory.controllerCode = winner.code;
+      if (territory.occupation) territory.occupation.by = winner.code;
+      if (!winner.annexed.includes(territory.code)) winner.annexed.push(territory.code);
+    } else if (territory.occupation?.by === loser.code) {
+      territory.occupation.by = winner.code;
+      territory.occupation.resistance = clamp(round((territory.occupation.resistance || 20) + 12, 1), 0, 100);
+      territory.occupation.nextResistanceAt = Date.now() + 8000;
+    }
+  }
   winner.influence = clamp(winner.influence + 10, 0, 100);
   loser.stability = clamp(loser.stability - 18, 0, 100);
   endWar(world, war, 'annexed');
@@ -592,6 +670,8 @@ function automaticCoalition(world, war, side) {
   if (side === 'b' && war.front < 0) power *= 1 - clamp(-war.front / 430, 0, .24);
   if (side === 'a' && war.front < 0) power *= 1 + clamp(-war.front / 620, 0, .16);
   if (side === 'b' && war.front > 0) power *= 1 + clamp(war.front / 620, 0, .16);
+  if (war.surge?.side === side && (war.surge.expiresAtTick || 0) >= (war.battleTicks || 0)) power *= war.surge.multiplier || 1.65;
+  if (war.kind === 'uprising' && side === 'b') power *= 1.12;
   return { country, enemy, members, offense, defense, power, distance };
 }
 
@@ -599,9 +679,32 @@ function resolveWarTick(world, war, now = Date.now()) {
   if (!war || war.status !== 'active' || now < (war.nextBattleAt || 0)) return null;
   const first = world.countries[war.a]; const second = world.countries[war.b];
   if (!first || !second) return null;
+  war.kind ||= 'territorial'; war.surgeCooldowns ||= { a: 0, b: 0 }; war.weather ||= 'clear';
   war.nextBattleAt = now + WAR_TICK_MS;
   war.battleTicks = (war.battleTicks || 0) + 1;
+  if (!WAR_WEATHER[war.weather]) war.weather = 'clear';
+  if (war.battleTicks - (war.weatherChangedAtTick || 0) >= 12) {
+    const weatherIds = Object.keys(WAR_WEATHER);
+    war.weather = weatherIds[Math.floor(hashFloat(`${world.seed}:weather:${war.id}:${war.battleTicks}`) * weatherIds.length)];
+    war.weatherChangedAtTick = war.battleTicks;
+    pushNews(world, `${WAR_WEATHER[war.weather].icon} На фронте ${CATALOG_BY_CODE[war.a].name} — ${CATALOG_BY_CODE[war.b].name} меняется погода: ${WAR_WEATHER[war.weather].name.toLowerCase()}.`, 'blue');
+  }
+  if (war.surge && war.battleTicks > (war.surge.expiresAtTick || 0)) war.surge = null;
+  const pressuredSide = war.front >= 10 ? 'b' : war.front <= -10 ? 'a' : null;
+  if (pressuredSide) {
+    const pressured = world.countries[war[pressuredSide]];
+    const botRoll = hashFloat(`${world.seed}:bot-surge:${war.id}:${war.battleTicks}`);
+    if (pressured?.isBot && !war.surge && now >= (war.surgeCooldowns?.[pressuredSide] || 0) && pressured.army.supplies >= 15 && botRoll < .075) {
+      pressured.army.supplies = round(pressured.army.supplies - 15, 1);
+      pressured.army.morale = clamp(round(pressured.army.morale + 8, 1), 0, 100);
+      war.surge = { side: pressuredSide, startedAtTick: war.battleTicks, expiresAtTick: war.battleTicks + 6, multiplier: 1.68 };
+      war.surgeCooldowns[pressuredSide] = now + 60000;
+      pushNews(world, `${CATALOG_BY_CODE[pressured.code].name} бросает стратегические резервы в контрнаступление и пытается отбить захваченные земли.`, 'gold');
+    }
+  }
   const a = automaticCoalition(world, war, 'a'); const b = automaticCoalition(world, war, 'b');
+  const weather = WAR_WEATHER[war.weather] || WAR_WEATHER.clear;
+  a.power *= weather.power; b.power *= weather.power;
   const variation = .97 + hashFloat(`${world.seed}:live-front:${war.id}:${war.battleTicks}`) * .06;
   const ratio = Math.max(.03, a.power * variation / Math.max(1, b.power));
   const pressure = Math.log2(ratio);
@@ -612,15 +715,17 @@ function resolveWarTick(world, war, now = Date.now()) {
   const winner = winningSide === 'a' ? a : b; const loser = winningSide === 'a' ? b : a;
   const winningTech = technologyBonuses(winner.country); const winningDoctrine = doctrineFor(winner.country);
   const captureMultiplier = (1 + (winningTech.capturePct || 0)) * (winningDoctrine.capture || 1);
-  const movement = round(clamp((.14 + Math.abs(pressure) * .92 + Math.abs(Math.log2(Math.max(.05, troopRatio))) * .12) * captureMultiplier, .1, 2.25), 1);
+  const breakthrough = hashFloat(`${world.seed}:breakthrough:${war.id}:${war.battleTicks}`) > .94 ? 1.45 : 1;
+  const movement = round(clamp((.14 + Math.abs(pressure) * .92 + Math.abs(Math.log2(Math.max(.05, troopRatio))) * .12) * captureMultiplier * weather.capture * breakthrough, .1, 2.65), 1);
   const previousFront = war.front;
   war.front = round(clamp(war.front + (winningSide === 'a' ? movement : -movement), -100, 100), 1);
+  if (war.kind === 'uprising') war.front = Math.max(0, war.front);
 
   const intensity = .0011 + clamp(Math.abs(pressure) * .00045, 0, .0012);
   const aLossPool = Math.max(.02, a.offense.troops * intensity * clamp(b.power / Math.max(1, a.power), .62, 1.9));
   const bLossPool = Math.max(.02, b.offense.troops * intensity * clamp(a.power / Math.max(1, b.power), .62, 1.9));
-  const aLosses = applyCoalitionLosses(a.members, aLossPool, .045, .11, winningSide === 'a' ? .12 : -.18, .08);
-  const bLosses = applyCoalitionLosses(b.members, bLossPool, .045, .11, winningSide === 'b' ? .12 : -.18, .08);
+  const aLosses = applyCoalitionLosses(a.members, aLossPool, .045, .11 * weather.supply, winningSide === 'a' ? .12 : -.18, .08);
+  const bLosses = applyCoalitionLosses(b.members, bLossPool, .045, .11 * weather.supply, winningSide === 'b' ? .12 : -.18, .08);
   first.warExhaustion = clamp(round(first.warExhaustion + .08 + aLosses * .08, 1), 0, 100);
   second.warExhaustion = clamp(round(second.warExhaustion + .08 + bLosses * .08, 1), 0, 100);
   syncWarOccupation(world, war);
@@ -635,12 +740,12 @@ function resolveWarTick(world, war, now = Date.now()) {
   war.casualties.a = round((war.casualties.a || 0) + aLosses, 1); war.casualties.b = round((war.casualties.b || 0) + bLosses, 1);
   const battle = {
     id: crypto.randomUUID(), automatic: true, timestamp: now, attacker: attacker.code, defender: defender.code,
-    tactic: 'live', tacticName: 'Непрерывный фронт', deployment: 78, movement, won: true, loot, turn: world.turn,
+    tactic: 'live', tacticName: breakthrough > 1 ? 'Прорыв фронта' : war.surge?.side === winningSide ? 'Контрнаступление' : 'Непрерывный фронт', deployment: 78, movement, won: true, loot, turn: world.turn,
     attackerTroops: winner.offense.troops, defenderTroops: loser.offense.troops,
     attackerPower: round(winner.power, 1), defenderPower: round(loser.power, 1),
     attackerLosses: winningSide === 'a' ? aLosses : bLosses, defenderLosses: winningSide === 'a' ? bLosses : aLosses,
     attackerAllies: winner.offense.allies, defenderAllies: loser.offense.allies,
-    supplyUsed: .11, distancePenalty: round((1 - winner.distance) * 100)
+    supplyUsed: round(.11 * weather.supply, 2), distancePenalty: round((1 - winner.distance) * 100), weather: war.weather
   };
   war.lastOperation = battle;
   war.battles.push(battle); war.battles = war.battles.slice(-16);
@@ -652,7 +757,24 @@ function resolveWarTick(world, war, now = Date.now()) {
     war.lastReportedMilestone = milestone;
     pushNews(world, `${CATALOG_BY_CODE[attacker.code].name} продвигает живой фронт: под контролем ${Math.abs(war.front)}% территории государства ${CATALOG_BY_CODE[defender.code].name}. Потери сторон: ${war.casualties.a}/${war.casualties.b} тыс.`, 'red');
   }
-  if (Math.abs(war.front) >= 100) {
+  if (war.kind === 'uprising' && war.front <= 0) {
+    const controller = first; const subject = second;
+    endWar(world, war, 'liberated');
+    releaseOccupation(world, controller, subject, 'revolt');
+    pushNews(world, `${CATALOG_BY_CODE[subject.code].name} побеждает в восстании, возвращает всю занятую землю и снова становится полностью независимым государством.`, 'gold');
+  } else if (war.kind === 'uprising' && war.front >= (war.suppressionTarget || 100)) {
+    endWar(world, war, 'suppressed');
+    if (second.occupation?.by === first.code) {
+      second.occupation.permanent = true;
+      second.occupation.resistance = 18;
+      second.occupation.resistanceChecks = 0;
+      second.occupation.nextResistanceAt = now + 30000;
+      second.occupation.revolt = null;
+    }
+    first.reputation = clamp(round(first.reputation - 5, 1), 0, 100);
+    second.stability = clamp(round(second.stability - 7, 1), 0, 100);
+    pushNews(world, `${CATALOG_BY_CODE[first.code].name} подавляет восстание в государстве ${CATALOG_BY_CODE[second.code].name}. Оккупационный режим сохранён, но репутация контролёра падает.`, 'red');
+  } else if (war.kind !== 'uprising' && Math.abs(war.front) >= 100) {
     const annexWinner = war.front > 0 ? first : second; const annexLoser = war.front > 0 ? second : first;
     annexCountry(world, war, annexWinner, annexLoser);
   }
@@ -675,6 +797,93 @@ function advanceWars(world, now = Date.now()) {
     countries: [...new Set(results.flatMap((result) => result.countries))],
     ended: results.some((result) => result.ended)
   };
+}
+
+function startUprisingWar(world, controller, subject, now = Date.now()) {
+  const occupation = subject.occupation;
+  if (!occupation || occupation.by !== controller.code || !occupation.permanent) return { ok: false, error: 'Нет закреплённой оккупации для подавления' };
+  if (activeWarFor(world, controller.code, subject.code)) return { ok: false, error: 'Бои с этой страной уже идут' };
+  if (countryBusyInWar(world, controller.code) || countryBusyInWar(world, subject.code)) return { ok: false, error: 'Одна из стран уже занята другой войной' };
+  const front = clamp(Number(occupation.percent) || 0, 1, 99);
+  controller.atWar.push(subject.code); subject.atWar.push(controller.code);
+  subject.eliminated = false; subject.absorbedBy = null; subject.defeated = false;
+  const reinforcement = Math.min(subject.army.reserve, Math.max(8, subject.population * .18));
+  subject.army.reserve = round(subject.army.reserve - reinforcement, 1);
+  subject.army.manpower = clamp(round(subject.army.manpower + reinforcement, 1), 0, 999);
+  subject.army.morale = clamp(round(subject.army.morale + 16, 1), 0, 100);
+  subject.army.readiness = clamp(round(subject.army.readiness + 12, 1), 0, 100);
+  const war = {
+    id: crypto.randomUUID(), kind: 'uprising', a: controller.code, b: subject.code, front, status: 'active',
+    suppressionTarget: round(Math.min(99, front + clamp(16 + occupation.resistance * .16, 18, 30)), 1),
+    startedAt: world.turn, startedAtMs: now, nextBattleAt: now + 900, battleTicks: 0, lastReportedMilestone: '',
+    operations: 0, lastOperation: null, supporters: { a: [], b: [] }, operationsByTurn: {}, battles: [], casualties: { a: 0, b: 0 },
+    surgeCooldowns: { a: 0, b: 0 }, surge: null, weather: 'clear', weatherChangedAtTick: 0
+  };
+  occupation.permanent = false; occupation.warId = war.id;
+  occupation.revolt = { ...(occupation.revolt || {}), status: 'fighting', warId: war.id, startedAt: now };
+  world.wars.push(war);
+  controller.warScore[subject.code] = front; subject.warScore[controller.code] = -front;
+  pushNews(world, `${CATALOG_BY_CODE[subject.code].name} поднимает вооружённое восстание. Повстанцы пытаются отвоевать ${front}% занятой территории у государства ${CATALOG_BY_CODE[controller.code].name}.`, 'red');
+  return { ok: true, toast: 'Началась автоматическая операция по подавлению восстания' };
+}
+
+function advanceResistance(world, now = Date.now()) {
+  migrateWorld(world);
+  const changed = new Set();
+  for (const subject of Object.values(world.countries)) {
+    const occupation = subject.occupation;
+    const controller = occupation && world.countries[occupation.by];
+    if (!occupation?.permanent || occupation.absorbed || subject.eliminated || !controller || occupation.percent <= 0 || occupation.percent >= 100) continue;
+    if (occupation.revolt?.status === 'active') {
+      if (controller.isBot && now - (occupation.revolt.startedAt || now) >= 6000) {
+        const release = controller.army.supplies < 12 || controller.stability < 38 || controller.reputation > 74;
+        if (release) {
+          releaseOccupation(world, controller, subject, 'released');
+          pushNews(world, `${CATALOG_BY_CODE[controller.code].name} не идёт на эскалацию и возвращает независимость государству ${CATALOG_BY_CODE[subject.code].name}.`, 'green');
+        } else {
+          startUprisingWar(world, controller, subject, now);
+        }
+        changed.add(controller.code); changed.add(subject.code);
+      }
+      continue;
+    }
+    if (now < (occupation.nextResistanceAt || 0)) continue;
+    occupation.resistanceChecks = (occupation.resistanceChecks || 0) + 1;
+    occupation.nextResistanceAt = now + 12000 + Math.floor(hashFloat(`${world.seed}:resistance-delay:${subject.code}:${occupation.resistanceChecks}`) * 6000);
+    const localAnger = (100 - subject.happiness) * .022 + (100 - subject.stability) * .026;
+    const occupationPressure = occupation.percent * .025;
+    const policing = controller.police * .018 + controller.reputation * .006;
+    const growth = clamp(.35 + localAnger + occupationPressure - policing, .15, 4.2);
+    occupation.resistance = round(clamp((occupation.resistance || 10) + growth, 0, 100), 1);
+    changed.add(subject.code);
+    const roll = hashFloat(`${world.seed}:resistance:${subject.code}:${occupation.by}:${occupation.resistanceChecks}`) * 100;
+    const protestChance = clamp((occupation.resistance - 32) * 1.25 + occupation.percent * .08, 0, 78);
+    if (roll <= protestChance) {
+      subject.stability = clamp(round(subject.stability - 1.2, 1), 0, 100);
+      controller.reputation = clamp(round(controller.reputation - .8, 1), 0, 100);
+      controller.influence = clamp(round(controller.influence - .4, 1), 0, 100);
+      occupation.lastProtestAt = now;
+      changed.add(controller.code);
+      if (occupation.resistance >= 58 && roll <= clamp((occupation.resistance - 50) * 2.2, 8, 62)) {
+        occupation.revolt = { status: 'active', startedAt: now, ultimatumUntil: now + 45000 };
+        pushNews(world, `${CATALOG_BY_CODE[subject.code].name}: протесты перерастают в национальное восстание. ${CATALOG_BY_CODE[controller.code].name} должно отпустить страну или подавить мятеж войсками.`, 'gold');
+      } else {
+        pushNews(world, `${CATALOG_BY_CODE[subject.code].name}: жители протестуют против контроля государства ${CATALOG_BY_CODE[controller.code].name}. Сопротивление — ${occupation.resistance}%.`, 'blue');
+      }
+    }
+  }
+  if (!changed.size) return { changed: false, countries: [], wars: [], ended: false };
+  calculateScores(world);
+  return { changed: true, countries: [...changed], wars: world.wars.filter((war) => war.status === 'active' && [...changed].some((code) => war.a === code || war.b === code)).map((war) => war.id), ended: false };
+}
+
+function hostileCooldownRemaining(country, now = Date.now()) {
+  return Math.max(0, HOSTILE_COOLDOWN_MS - (now - (country.lastHostileActionAt || 0)));
+}
+
+function requireHostileCooldown(country, now = Date.now()) {
+  const remaining = hostileCooldownRemaining(country, now);
+  return remaining > 0 ? { ok: false, error: `Следующую враждебную акцию можно провести через ${Math.ceil(remaining / 1000)} сек.` } : null;
 }
 
 function resolveAttack(world, attacker, defender, deploymentValue = 60, tacticId = 'standard') {
@@ -767,6 +976,7 @@ function pushNews(world, text, tone = 'blue') {
 }
 
 function incomeFor(country) {
+  if (country.eliminated || country.absorbedBy) return 0;
   const base = Math.sqrt(country.gdp) * 0.7;
   const systems = (country.industry + country.infrastructure + country.energy) / 210;
   const taxes = country.taxRate / 24;
@@ -788,7 +998,7 @@ function calculateScores(world) {
   migrateWorld(world);
   for (const country of Object.values(world.countries)) {
     const ownArea = CATALOG_BY_CODE[country.code]?.area || 1;
-    const retainedArea = ownArea * (1 - (country.occupation?.percent || 0) / 100);
+    const retainedArea = country.eliminated ? 0 : ownArea * (1 - (country.occupation?.percent || 0) / 100);
     const controlledArea = Object.values(world.countries).reduce((sum, target) => target.occupation?.by === country.code
       ? sum + (CATALOG_BY_CODE[target.code]?.area || 1) * target.occupation.percent / 100 : sum, 0);
     country.territoryArea = Math.round(retainedArea + controlledArea);
@@ -796,7 +1006,7 @@ function calculateScores(world) {
     country.militaryPower = militaryPower(country);
     const progress = Object.keys(country.techs || {}).length * 5 + (country.completedProjects?.length || 0) * 12;
     const territory = Math.sqrt(Math.max(1, country.territoryArea)) / 18;
-    country.score = Math.round(country.gdp * 0.025 + country.stability + country.happiness + country.influence * 1.5 + country.reputation * .45 + country.police * .2 + country.militaryPower * 0.45 + progress + territory);
+    country.score = country.eliminated ? 0 : Math.round(country.gdp * 0.025 + country.stability + country.happiness + country.influence * 1.5 + country.reputation * .45 + country.police * .2 + country.militaryPower * 0.45 + progress + territory);
   }
 }
 
@@ -804,6 +1014,7 @@ function selectCountry(world, player, code) {
   if (player.countryCode) return { ok: false, error: 'Страна уже выбрана навсегда для этой партии' };
   const country = world.countries[code];
   if (!country || !CATALOG_BY_CODE[code]) return { ok: false, error: 'Такой страны нет в мире' };
+  if (country.eliminated || country.absorbedBy) return { ok: false, error: 'Эта страна уже полностью присоединена к другой державе' };
   if (country.ownerId) return { ok: false, error: 'Эта страна уже занята другим игроком' };
   player.countryCode = code;
   country.ownerId = player.id;
@@ -824,6 +1035,7 @@ function performAction(world, player, message) {
   migrateWorld(world);
   const country = world.countries[player.countryCode];
   if (!country) return { ok: false, error: 'Сначала выберите страну' };
+  if (country.eliminated || country.absorbedBy) return { ok: false, error: `Ваша страна полностью присоединена к государству ${CATALOG_BY_CODE[country.absorbedBy]?.name || country.absorbedBy}. Вы продолжаете наблюдать за миром.` };
   const meta = CATALOG_BY_CODE[country.code];
 
   if (message.action === 'technology') {
@@ -932,6 +1144,27 @@ function performAction(world, player, message) {
   const target = world.countries[message.target];
   const targetMeta = CATALOG_BY_CODE[message.target];
   if (!target || target.code === country.code) return { ok: false, error: 'Выберите другое государство' };
+  if (target.eliminated || target.absorbedBy) return { ok: false, error: `Эта территория уже является частью государства ${CATALOG_BY_CODE[target.absorbedBy]?.name || target.absorbedBy}` };
+
+  if (message.action === 'occupation') {
+    const occupation = target.occupation;
+    if (!occupation || occupation.by !== country.code || !occupation.permanent || occupation.absorbed) return { ok: false, error: 'У вас нет закреплённой оккупации этой страны' };
+    if (message.id === 'release') {
+      if (activeWarFor(world, country.code, target.code)) return { ok: false, error: 'Сначала завершите активные бои' };
+      releaseOccupation(world, country, target, 'released');
+      pushNews(world, `${meta.name} возвращает независимость государству ${targetMeta.name}. Оккупационный режим прекращён.`, 'green');
+      return { ok: true, toast: 'Страна освобождена · репутация +6 · доверие +28' };
+    }
+    if (message.id === 'suppress') {
+      if (occupation.revolt?.status !== 'active') return { ok: false, error: 'Вооружённого восстания сейчас нет' };
+      if (countryBusyInWar(world, country.code) || countryBusyInWar(world, target.code)) return { ok: false, error: 'Одна из стран уже занята другой войной' };
+      if (country.army.supplies < 12) return { ok: false, error: 'Для операции нужно 12 снабжения' };
+      if (!spend(country, 18)) return { ok: false, error: 'Для подавления нужно 18 млрд' };
+      country.army.supplies = round(country.army.supplies - 12, 1);
+      return startUprisingWar(world, country, target);
+    }
+    return { ok: false, error: 'Неизвестное решение по оккупированной территории' };
+  }
 
   if (message.action === 'theft') {
     const asset = STEALABLE_ASSETS[message.id];
@@ -1025,16 +1258,22 @@ function performAction(world, player, message) {
       return { ok: true, toast: 'Пакет помощи отправлен' };
     }
     if (message.id === 'sanction') {
+      const cooldown = requireHostileCooldown(country);
+      if (cooldown) return cooldown;
       if (!country.sanctions.includes(target.code)) country.sanctions.push(target.code);
       changeRelation(world, country.code, target.code, -22);
       target.gdp = round(target.gdp * 0.995, 1); country.influence = clamp(country.influence + 1, 0, 100);
+      country.lastHostileActionAt = Date.now();
       pushNews(world, `${meta.name} вводит санкции против государства ${targetMeta.name}.`, 'red');
       return { ok: true, toast: 'Санкции введены' };
     }
     if (message.id === 'pressure') {
+      const cooldown = requireHostileCooldown(country);
+      if (cooldown) return cooldown;
       if (!spend(country, 5)) return { ok: false, error: 'Для ультиматума нужно 5 млрд' };
       const value = changeRelation(world, country.code, target.code, -18);
       target.stability = clamp(target.stability - 1, 0, 100);
+      country.lastHostileActionAt = Date.now();
       pushNews(world, `${meta.name} выдвигает ультиматум государству ${targetMeta.name}. Доверие между странами падает.`, 'red');
       return { ok: true, toast: `Ультиматум: доверие снижено до ${value}` };
     }
@@ -1042,15 +1281,19 @@ function performAction(world, player, message) {
       const kinds = ['trade', 'alliance', 'nonaggression'];
       const hadTreaty = kinds.some((kind) => country.treaties.includes(`${kind}:${target.code}`) || target.treaties.includes(`${kind}:${country.code}`));
       if (!hadTreaty) return { ok: false, error: 'Между странами нет действующих договоров' };
+      const cooldown = requireHostileCooldown(country);
+      if (cooldown) return cooldown;
       country.treaties = country.treaties.filter((treaty) => !kinds.some((kind) => treaty === `${kind}:${target.code}`));
       target.treaties = target.treaties.filter((treaty) => !kinds.some((kind) => treaty === `${kind}:${country.code}`));
       const value = changeRelation(world, country.code, target.code, -20);
+      country.lastHostileActionAt = Date.now();
       pushNews(world, `${meta.name} разрывает все договоры с государством ${targetMeta.name}.`, 'red');
       return { ok: true, toast: `Договоры разорваны · доверие ${value}` };
     }
     if (message.id === 'peace') {
       if (!country.atWar.includes(target.code)) return { ok: false, error: 'Между странами нет войны' };
       const war = activeWarFor(world, country.code, target.code);
+      if (war?.kind === 'uprising') return { ok: false, error: 'Восстание заканчивается только освобождением территории или военным подавлением' };
       if (war) endWar(world, war, 'peace');
       else {
         country.atWar = country.atWar.filter((code) => code !== target.code);
@@ -1083,11 +1326,33 @@ function performAction(world, player, message) {
 
   if (message.action === 'conflict') {
     if (message.id === 'exercise') {
+      const cooldown = requireHostileCooldown(country);
+      if (cooldown) return cooldown;
       if (!spend(country, 12)) return { ok: false, error: 'Для учений нужно 12 млрд' };
       country.army.readiness = clamp(country.army.readiness + 4, 0, 100);
       changeRelation(world, country.code, target.code, -7);
+      country.lastHostileActionAt = Date.now();
       pushNews(world, `${meta.name} проводит военные учения у границ государства ${targetMeta.name}.`, 'red');
       return { ok: true, toast: 'Военные учения начались' };
+    }
+    if (message.id === 'surge') {
+      const war = activeWarFor(world, country.code, target.code);
+      if (!war) return { ok: false, error: 'У стран нет активного фронта' };
+      const side = country.code === war.a ? 'a' : country.code === war.b ? 'b' : null;
+      if (!side) return { ok: false, error: 'Контрудар проводит основная сторона войны' };
+      const pressure = side === 'a' ? -war.front : war.front;
+      if (pressure < 10) return { ok: false, error: 'Стратегический резерв доступен, когда противник занял не менее 10% вашей земли' };
+      if (war.surge) return { ok: false, error: 'На фронте уже идёт усиленная операция' };
+      const remaining = Math.max(0, (war.surgeCooldowns?.[side] || 0) - Date.now());
+      if (remaining > 0) return { ok: false, error: `Резервы восстановятся через ${Math.ceil(remaining / 1000)} сек.` };
+      if (country.army.supplies < 15) return { ok: false, error: 'Для контрнаступления нужно 15 снабжения' };
+      country.army.supplies = round(country.army.supplies - 15, 1);
+      country.army.morale = clamp(round(country.army.morale + 8, 1), 0, 100);
+      country.warExhaustion = clamp(round(country.warExhaustion + 4, 1), 0, 100);
+      war.surge = { side, startedAtTick: war.battleTicks || 0, expiresAtTick: (war.battleTicks || 0) + 6, multiplier: 1.68 };
+      war.surgeCooldowns ||= { a: 0, b: 0 }; war.surgeCooldowns[side] = Date.now() + 60000;
+      pushNews(world, `${meta.name} бросает стратегический резерв в контрнаступление. Следующие шесть боевых тактов армия сражается с повышенной силой.`, 'gold');
+      return { ok: true, toast: 'Контрнаступление началось · сила ×1,68 на 6 боевых тактов' };
     }
     if (message.id === 'fortify') {
       const war = activeWarFor(world, country.code, target.code);
@@ -1114,10 +1379,11 @@ function performAction(world, player, message) {
       if (country.treaties.some((treaty) => treaty === `alliance:${target.code}` || treaty === `nonaggression:${target.code}`)) return { ok: false, error: 'Сначала необходимо разорвать действующий договор' };
       if (country.occupation?.by && country.occupation.by !== target.code) return { ok: false, error: 'Страна уже находится под контролем другой державы' };
       if (target.occupation?.by && target.occupation.by !== country.code) return { ok: false, error: 'Эта территория уже занята другой державой' };
+      if (target.occupation?.by === country.code && target.occupation.revolt) return { ok: false, error: 'Сначала выберите решение по восстанию: отпустить страну или подавить его' };
       country.atWar.push(target.code); target.atWar.push(country.code);
       changeRelation(world, country.code, target.code, -100);
       country.warScore ||= {}; target.warScore ||= {};
-      const war = { id: crypto.randomUUID(), a: country.code, b: target.code, front: occupiedFront(world, country.code, target.code), status: 'active', startedAt: world.turn, startedAtMs: Date.now(), nextBattleAt: Date.now() + 900, battleTicks: 0, lastReportedMilestone: '', operations: 0, lastOperation: null, supporters: { a: [], b: [] }, operationsByTurn: {}, battles: [], casualties: { a: 0, b: 0 } };
+      const war = { id: crypto.randomUUID(), kind: 'territorial', a: country.code, b: target.code, front: occupiedFront(world, country.code, target.code), status: 'active', startedAt: world.turn, startedAtMs: Date.now(), nextBattleAt: Date.now() + 900, battleTicks: 0, lastReportedMilestone: '', operations: 0, lastOperation: null, supporters: { a: [], b: [] }, operationsByTurn: {}, battles: [], casualties: { a: 0, b: 0 }, surgeCooldowns: { a: 0, b: 0 }, surge: null, weather: 'clear', weatherChangedAtTick: 0 };
       world.wars.push(war);
       syncWarOccupation(world, war);
       country.warScore[target.code] = war.front; target.warScore[country.code] = -war.front;
@@ -1227,6 +1493,7 @@ function advanceTurn(world) {
   world.quarter += 1;
   if (world.quarter > 4) { world.quarter = 1; world.year += 1; }
   for (const country of Object.values(world.countries)) {
+    if (country.eliminated || country.absorbedBy) continue;
     const tech = technologyBonuses(country);
     country.treasury = round(country.treasury + incomeFor(country), 1);
     const focusBonus = { economy: 'industry', science: 'science', defense: null, welfare: 'healthcare' }[country.focus];
@@ -1272,8 +1539,8 @@ function advanceTurn(world) {
   }
   for (const occupied of Object.values(world.countries)) {
     const controller = world.countries[occupied.occupation?.by];
-    if (!controller || !occupied.occupation?.percent) continue;
-    const tribute = round(Math.min(occupied.treasury, incomeFor(occupied) * occupied.occupation.percent / 100 * .35), 1);
+    if (!controller || controller.eliminated || occupied.eliminated || !occupied.occupation?.permanent || occupied.occupation?.absorbed || occupied.occupation?.revolt || !occupied.occupation?.percent) continue;
+    const tribute = round(Math.min(occupied.treasury, incomeFor(occupied) * occupied.occupation.percent / 100 * .10), 1);
     if (tribute <= 0) continue;
     occupied.treasury = round(occupied.treasury - tribute, 1);
     controller.treasury = round(controller.treasury + tribute, 1);
@@ -1286,6 +1553,7 @@ function advanceTurn(world) {
 
 function ranking(world) {
   return Object.values(world.countries)
+    .filter((country) => !country.eliminated && !country.absorbedBy)
     .sort((a, b) => b.score - a.score)
     .slice(0, 12)
     .map((c, index) => ({ rank: index + 1, code: c.code, score: c.score }));
@@ -1293,6 +1561,6 @@ function ranking(world) {
 
 module.exports = {
   CATALOG, CATALOG_BY_CODE, DEVELOPMENT_ACTIONS, MILITARY_ACTIONS, BATTLE_TACTICS, MILITARY_DOCTRINES, TECHNOLOGY_TREE, NATIONAL_PROJECTS, DECISIONS, STEALABLE_ASSETS,
-  createWorld, migrateWorld, selectCountry, performAction, advanceTurn, advanceWars, calculateScores,
-  getRelation, incomeFor, militaryPower, ranking, clamp, technologyBonuses, theftChance
+  createWorld, migrateWorld, selectCountry, performAction, advanceTurn, advanceWars, advanceResistance, calculateScores,
+  getRelation, incomeFor, militaryPower, ranking, clamp, technologyBonuses, theftChance, hostileCooldownRemaining
 };

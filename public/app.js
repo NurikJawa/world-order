@@ -132,7 +132,7 @@ function connect(connection) {
       if (message.resumed) toast('Сохранённая сессия восстановлена');
     }
     if (message.type === 'state') { app.state = message; render(); }
-    if (message.type === 'warTick' && app.state) {
+    if ((message.type === 'warTick' || message.type === 'worldDelta') && app.state) {
       for (const [code, state] of Object.entries(message.countries || {})) app.state.world.countries[code] = state;
       for (const changedWar of message.wars || []) {
         const index = app.state.world.wars.findIndex((war) => war.id === changedWar.id);
@@ -140,6 +140,7 @@ function connect(connection) {
       }
       app.state.world.news = message.news || app.state.world.news;
       app.state.ranking = message.ranking || app.state.ranking;
+      app.state.relations = message.relations || app.state.relations;
       app.state.savedAt = message.savedAt || app.state.savedAt;
       renderTop(); renderMapStyles(); renderInspector(); renderNews();
       app.warRenderStep += 1;
@@ -323,6 +324,8 @@ function buildMap() {
 }
 
 function chooseMapCountry(code) {
+  const absorbed = country(code)?.absorbedBy;
+  if (absorbed && me()?.countryCode) code = absorbed;
   if (!me()?.countryCode) {
     app.modalCode = code;
     renderCountryGrid($('#modalCountrySearch').value);
@@ -340,7 +343,8 @@ function showTooltip(event, code) {
   const meta = catalog(code); const c = country(code); const owner = ownerOf(code);
   const tooltip = $('#mapTooltip');
   const occupation = c?.occupation;
-  tooltip.innerHTML = `<em>${owner ? 'ИГРОК' : 'ИИ'}</em><b>${meta?.flag || ''} ${esc(meta?.name || code)}</b><small>${esc(meta?.capital || '—')} · СИЛА ${formatNumber(c?.score)}</small>${occupation ? `<small class="occupied-tip">⚑ ${formatNumber(occupation.percent,1)}% под контролем ${esc(catalog(occupation.by)?.name || occupation.by)}</small>` : ''}`;
+  const absorbedBy = c?.absorbedBy ? catalog(c.absorbedBy) : null;
+  tooltip.innerHTML = `<em>${absorbedBy ? 'ПРИСОЕДИНЕНО' : owner ? 'ИГРОК' : 'ИИ'}</em><b>${absorbedBy?.flag || meta?.flag || ''} ${esc(absorbedBy ? `${meta?.name} · часть ${absorbedBy.name}` : meta?.name || code)}</b><small>${absorbedBy ? 'Больше не является отдельным государством' : `${esc(meta?.capital || '—')} · СИЛА ${formatNumber(c?.score)}`}</small>${occupation && !occupation.absorbed ? `<small class="occupied-tip">⚑ ${formatNumber(occupation.percent,1)}% под контролем ${esc(catalog(occupation.by)?.name || occupation.by)}</small>` : ''}`;
   tooltip.classList.remove('hidden'); moveTooltip(event);
 }
 function moveTooltip(event) {
@@ -363,24 +367,31 @@ function politicalColor(code) {
   return `hsl(${hash} 38% 42%)`;
 }
 
-function frontGeometry(box, share, source, destination) {
-  let x=box.x; let y=box.y; let width=box.width; let height=box.height; let line; let advance={x:0,y:0}; let vertical=false;
-  if (Math.abs(source[0]-destination[0])>=Math.abs(source[1]-destination[1])) {
-    vertical=true; width=Math.max(.1,box.width*share);
-    if (source[0]>destination[0]) x=box.x+box.width-width;
-    const edge=source[0]>destination[0]?x:x+width; line=[edge,box.y,edge,box.y+box.height]; advance.x=source[0]>destination[0]?-3:3;
-  } else {
-    height=Math.max(.1,box.height*share);
-    if (source[1]>destination[1]) y=box.y+box.height-height;
-    const edge=source[1]>destination[1]?y:y+height; line=[box.x,edge,box.x+box.width,edge]; advance.y=source[1]>destination[1]?-3:3;
+function frontNoise(code, index) {
+  let hash=29;
+  for(const char of `${code}:${index}`)hash=(hash*33+char.charCodeAt(0))%104729;
+  return Math.sin(hash*.071)*.62+Math.sin(hash*.019+index*1.73)*.38;
+}
+
+function frontShape(box, share, source, destination, code) {
+  const vertical=Math.abs(source[0]-destination[0])>=Math.abs(source[1]-destination[1]); const count=18; const points=[];
+  const edgeStrength=Math.min(1,share*10,(1-share)*10);
+  if(vertical){
+    const fromRight=source[0]>destination[0];const base=fromRight?box.x+box.width-box.width*share:box.x+box.width*share;const amplitude=Math.min(26,box.width*.24)*edgeStrength;
+    for(let index=0;index<=count;index+=1){const y=box.y+box.height*index/count;const taper=Math.sin(Math.PI*index/count);const x=Math.max(box.x,Math.min(box.x+box.width,base+frontNoise(code,index)*amplitude*taper));points.push([x,y]);}
+    const border=fromRight?box.x+box.width:box.x;const path=`M${border},${box.y}L${points.map(([x,y])=>`${x},${y}`).join('L')}L${border},${box.y+box.height}Z`;
+    return {path,linePath:`M${points.map(([x,y])=>`${x},${y}`).join('L')}`,points,vertical,advance:{x:fromRight?-1:1,y:0}};
   }
-  return {x,y,width,height,line,vertical,advance};
+  const fromBottom=source[1]>destination[1];const base=fromBottom?box.y+box.height-box.height*share:box.y+box.height*share;const amplitude=Math.min(26,box.height*.26)*edgeStrength;
+  for(let index=0;index<=count;index+=1){const x=box.x+box.width*index/count;const taper=Math.sin(Math.PI*index/count);const y=Math.max(box.y,Math.min(box.y+box.height,base+frontNoise(code,index)*amplitude*taper));points.push([x,y]);}
+  const border=fromBottom?box.y+box.height:box.y;const path=`M${box.x},${border}L${points.map(([x,y])=>`${x},${y}`).join('L')}L${box.x+box.width},${border}Z`;
+  return {path,linePath:`M${points.map(([x,y])=>`${x},${y}`).join('L')}`,points,vertical,advance:{x:0,y:fromBottom?-1:1}};
 }
 
 function animateSvg(node, attribute, from, to, duration = 1.35) {
-  if (!Number.isFinite(from)||!Number.isFinite(to)||Math.abs(from-to)<.001) return;
+  if ((typeof from==='number'&&(!Number.isFinite(from)||!Number.isFinite(to)||Math.abs(from-to)<.001))||from===to) return;
   const animation=document.createElementNS('http://www.w3.org/2000/svg','animate');
-  animation.setAttribute('attributeName',attribute); animation.setAttribute('from',from); animation.setAttribute('to',to); animation.setAttribute('dur',`${duration}s`); animation.setAttribute('fill','freeze'); animation.setAttribute('calcMode','spline'); animation.setAttribute('keySplines','.22 .8 .25 1');
+  animation.setAttribute('attributeName',attribute); animation.setAttribute('from',from); animation.setAttribute('to',to); animation.setAttribute('dur',`${duration}s`); animation.setAttribute('fill','freeze'); animation.setAttribute('calcMode','spline'); animation.setAttribute('keyTimes','0;1'); animation.setAttribute('keySplines','.22 .8 .25 1');
   node.append(animation);
 }
 
@@ -401,30 +412,20 @@ function renderFronts() {
     const path=document.querySelector(`.country[data-code="${target.code}"]`); if(!path)continue;
     const box=path.getBBox(); const share=Math.max(0,Math.min(1,occupation.percent/100)); const previousShare=Math.max(0,Math.min(1,previousPercent/100));
     const attackerMeta=catalog(occupation.by);const targetMeta=catalog(target.code);const source=attackerMeta?project([attackerMeta.latlng[1],attackerMeta.latlng[0]]):[box.x,box.y];const destination=targetMeta?project([targetMeta.latlng[1],targetMeta.latlng[0]]):[box.x+box.width/2,box.y+box.height/2];
-    const geometry=frontGeometry(box,share,source,destination);const before=frontGeometry(box,previousShare,source,destination);const duration=occupation.permanent?.1:1.35;
-    const rect=document.createElementNS('http://www.w3.org/2000/svg','rect');
-    for(const key of ['x','y','width','height']){rect.setAttribute(key,geometry[key]);animateSvg(rect,key,before[key],geometry[key],duration);}
-    rect.setAttribute('clip-path',`url(#front-clip-${target.code})`);rect.setAttribute('class',`occupation-fill${occupation.permanent?' permanent':''}`);rect.style.fill=color;group.append(rect);
+    const geometry=frontShape(box,share,source,destination,target.code);const before=frontShape(box,previousShare,source,destination,target.code);const duration=occupation.permanent?.1:1.35;
+    const territory=document.createElementNS('http://www.w3.org/2000/svg','path');territory.setAttribute('d',geometry.path);animateSvg(territory,'d',before.path,geometry.path,duration);
+    territory.setAttribute('clip-path',`url(#front-clip-${target.code})`);territory.setAttribute('class',`occupation-fill${occupation.permanent?' permanent':''}`);territory.style.fill=color;group.append(territory);
     if(share<.995&&!occupation.permanent){
-      for(let index=0;index<9;index+=1){
-        const progress=(index+.45)/9;const wave=Math.sin((index+target.code.charCodeAt(0))*.9)*1.6;const bulge=document.createElementNS('http://www.w3.org/2000/svg','circle');
-        const cx=geometry.vertical?geometry.line[0]+geometry.advance.x*(.25+((index*7)%5)/5)+wave:geometry.line[0]+(geometry.line[2]-geometry.line[0])*progress;
-        const cy=geometry.vertical?geometry.line[1]+(geometry.line[3]-geometry.line[1])*progress:geometry.line[1]+geometry.advance.y*(.25+((index*7)%5)/5)+wave;
-        bulge.setAttribute('cx',cx);bulge.setAttribute('cy',cy);bulge.setAttribute('r',String(1.5+(index%4)*.48));bulge.setAttribute('clip-path',`url(#front-clip-${target.code})`);bulge.setAttribute('class','front-bulge');bulge.style.fill=color;group.append(bulge);
-      }
-      const front=document.createElementNS('http://www.w3.org/2000/svg','line');
-      ['x1','y1','x2','y2'].forEach((name,index)=>{front.setAttribute(name,geometry.line[index]);animateSvg(front,name,before.line[index],geometry.line[index],duration);});
+      const front=document.createElementNS('http://www.w3.org/2000/svg','path');front.setAttribute('d',geometry.linePath);animateSvg(front,'d',before.linePath,geometry.linePath,duration);
       front.setAttribute('clip-path',`url(#front-clip-${target.code})`);front.setAttribute('class','front-line');group.append(front);
       const attackingArmy=country(occupation.by)?.army?.manpower||40;const unitCount=Math.round(Math.max(5,Math.min(16,attackingArmy/18)));
       for(let index=0;index<unitCount;index+=1){
-        const progress=(index+.55)/unitCount;const unit=document.createElementNS('http://www.w3.org/2000/svg','circle');
-        const cx=geometry.vertical?geometry.line[0]+(index%3-1)*1.25:geometry.line[0]+(geometry.line[2]-geometry.line[0])*progress;
-        const cy=geometry.vertical?geometry.line[1]+(geometry.line[3]-geometry.line[1])*progress:geometry.line[1]+(index%3-1)*1.25;
-        const beforeCx=geometry.vertical?before.line[0]+(index%3-1)*1.25:cx;const beforeCy=geometry.vertical?cy:before.line[1]+(index%3-1)*1.25;
-        unit.setAttribute('cx',cx);unit.setAttribute('cy',cy);unit.setAttribute('r',index%4===0?'1':'0.72');unit.setAttribute('clip-path',`url(#front-clip-${target.code})`);unit.setAttribute('class','front-unit');unit.style.fill=color;unit.style.setProperty('--mx',`${geometry.advance.x}px`);unit.style.setProperty('--my',`${geometry.advance.y}px`);unit.style.animationDelay=`-${(index%7)*.13}s`;animateSvg(unit,'cx',beforeCx,cx,duration);animateSvg(unit,'cy',beforeCy,cy,duration);group.append(unit);
+        const pointIndex=Math.min(geometry.points.length-1,Math.round((index+.5)/unitCount*(geometry.points.length-1)));const point=geometry.points[pointIndex];const prior=before.points[pointIndex];const lane=(index%3-1)*1.3;
+        const cx=point[0]+(geometry.vertical?geometry.advance.x*(1.2+index%2):lane);const cy=point[1]+(geometry.vertical?lane:geometry.advance.y*(1.2+index%2));const beforeCx=prior[0]+(geometry.vertical?geometry.advance.x*(1.2+index%2):lane);const beforeCy=prior[1]+(geometry.vertical?lane:geometry.advance.y*(1.2+index%2));
+        const unit=document.createElementNS('http://www.w3.org/2000/svg','circle');unit.setAttribute('cx',cx);unit.setAttribute('cy',cy);unit.setAttribute('r',index%4===0?'1':'0.72');unit.setAttribute('clip-path',`url(#front-clip-${target.code})`);unit.setAttribute('class','front-unit');unit.style.fill=color;unit.style.animationDelay=`-${(index%7)*.13}s`;animateSvg(unit,'cx',beforeCx,cx,duration);animateSvg(unit,'cy',beforeCy,cy,duration);group.append(unit);
       }
       for(let index=0;index<3;index+=1){
-        const progress=(index+.7)/3;const impact=document.createElementNS('http://www.w3.org/2000/svg','circle');impact.setAttribute('cx',geometry.vertical?geometry.line[0]:geometry.line[0]+(geometry.line[2]-geometry.line[0])*progress);impact.setAttribute('cy',geometry.vertical?geometry.line[1]+(geometry.line[3]-geometry.line[1])*progress:geometry.line[1]);impact.setAttribute('r','1.1');impact.setAttribute('clip-path',`url(#front-clip-${target.code})`);impact.setAttribute('class','front-impact');impact.style.animationDelay=`-${index*.37}s`;group.append(impact);
+        const point=geometry.points[Math.round((index+1)/4*(geometry.points.length-1))];const impact=document.createElementNS('http://www.w3.org/2000/svg','circle');impact.setAttribute('cx',point[0]);impact.setAttribute('cy',point[1]);impact.setAttribute('r','1.1');impact.setAttribute('clip-path',`url(#front-clip-${target.code})`);impact.setAttribute('class','front-impact');impact.style.animationDelay=`-${index*.37}s`;group.append(impact);
       }
     }
   }
@@ -443,9 +444,9 @@ function renderMapStyles() {
     const code = path.dataset.code; const c = country(code); const owner = ownerOf(code);
     const isMarker = path.classList.contains('country-marker');
     const side=warSide(viewerWar,code); const coalitionClass=side&&side===viewerSide&&code!==viewerCode?' coalition-ally':side&&side!==viewerSide?' coalition-enemy':'';
-    path.className.baseVal = `${isMarker ? 'country-marker' : 'country'}${owner ? ' human' : ''}${code === viewerCode ? ' self' : ''}${code === app.selectedCode ? ' target' : ''}${coalitionClass}`;
+    path.className.baseVal = `${isMarker ? 'country-marker' : 'country'}${owner ? ' human' : ''}${c?.absorbedBy ? ' absorbed' : ''}${code === viewerCode ? ' self' : ''}${code === app.selectedCode ? ' target' : ''}${coalitionClass}`;
     let fill = app.layer === 'terrain' ? (isMarker ? '#f0cc72' : 'rgba(10,28,30,.08)') : '';
-    if (app.layer === 'political') fill = politicalColor(c?.controllerCode || code);
+    if (app.layer === 'political') fill = politicalColor(c?.absorbedBy || c?.controllerCode || code);
     if (app.layer === 'economy') fill = colorScale(Math.log10((c?.gdp || 0) + 1), 0, maxGdp, '203039', '42b99c');
     if (app.layer === 'military') fill = colorScale(c?.militaryPower || 0, 0, maxPower, '26343b', 'cb685f');
     if (app.layer === 'relations' && me()?.countryCode) {
@@ -553,6 +554,11 @@ function noCountry() {
 function renderPanel() {
   const content = $('#panelContent'); const c = myCountry(); const meta = catalog(me()?.countryCode);
   if (!c) { content.innerHTML = noCountry(); return; }
+  if (c.eliminated) {
+    const controller=catalog(c.absorbedBy);
+    content.innerHTML=`<div class="panel-kicker"><span>РЕЖИМ НАБЛЮДАТЕЛЯ</span></div><h2 class="panel-title">${meta?.flag||''} ${esc(meta?.name||c.code)} поглощена</h2><p class="panel-subtitle">Вся территория стала частью государства ${esc(controller?.name||c.absorbedBy)}. Полное присоединение необратимо: отдельной экономики, армии и оккупационной дани больше нет.</p><div class="empty-state">Вы можете продолжать наблюдать за общей картой, живыми войнами и мировой лентой в этой комнате.</div>`;
+    return;
+  }
   if (app.activeTab === 'overview') {
     const decision = app.state.definitions.decisions?.find((item) => item.id === c.pendingDecision);
     const decisionHtml = decision ? `<article class="decision-card"><small>ГОСУДАРСТВЕННОЕ СОБЫТИЕ · ТРЕБУЕТ РЕШЕНИЯ</small><h3>${esc(decision.title)}</h3><p>${esc(decision.text)}</p><div class="decision-options">${decision.options.map((option) => `<button data-decision="${option.id}"><b>${esc(option.label)}</b><span>${esc(option.note)}</span></button>`).join('')}</div></article>` : '';
@@ -625,14 +631,19 @@ function renderInspector() {
   if (!c || !meta) return;
   const relation = mine && mine !== app.selectedCode ? app.state.relations[app.selectedCode] : null;
   const atWar = mine && c.atWar.includes(mine);
-  const controller = c.controllerCode ? catalog(c.controllerCode) : null;
-  const occupationNote = c.occupation ? `<div class="occupation-notice"><b>⚑ КОНТРОЛЬ ТЕРРИТОРИИ</b><span>${formatNumber(c.occupation.percent,1)}% удерживает ${esc(catalog(c.occupation.by)?.name || c.occupation.by)}${c.occupation.permanent ? ' · закреплено миром' : ' · активный фронт'}</span></div>` : '';
+  const controller = c.absorbedBy ? catalog(c.absorbedBy) : c.controllerCode ? catalog(c.controllerCode) : null;
+  const occupationNote = c.eliminated ? `<div class="occupation-notice absorbed-notice"><b>◆ ГОСУДАРСТВО ПОЛНОСТЬЮ ПРИСОЕДИНЕНО</b><span>Вся территория стала частью державы ${esc(controller?.name || c.absorbedBy)}. Отдельной казны, дани и риска восстания больше нет.</span></div>` : c.occupation ? `<div class="occupation-notice${c.occupation.revolt ? ' revolt' : ''}"><b>${c.occupation.revolt ? '⚠ НАЦИОНАЛЬНОЕ ВОССТАНИЕ' : '⚑ КОНТРОЛЬ ТЕРРИТОРИИ'}</b><span>${formatNumber(c.occupation.percent,1)}% удерживает ${esc(catalog(c.occupation.by)?.name || c.occupation.by)}${c.occupation.permanent ? ' · закреплено миром' : ' · активный фронт'} · сопротивление ${formatNumber(c.occupation.resistance,1)}%</span></div>` : '';
   const theftChance = relation != null ? theftChanceFor(own, c) : 0;
   const alreadyAttempted = own?.lastTheftTurn === app.state.world.turn;
-  const theftAssets = relation != null ? Object.entries(app.state.definitions.assets || {}).filter(([id]) => (c.vault?.[id] || 0) > 0) : [];
-  const theftHtml = relation != null ? `<section class="theft-box"><header><div><small>ТАЙНАЯ СЛУЖБА · ХРАНИЛИЩЕ ЦЕЛИ</small><h3>Операция «Тихие руки»</h3></div><strong>${formatNumber(theftChance,1)}%</strong></header><div class="security-line"><span>Полиция цели: <b>${formatNumber(c.police)} / 100</b></span><span>Ваша репутация: <b>${formatNumber(own.reputation)} / 100</b></span></div><p>${c.police < 45 ? 'Полиция развита слабо: базовый шанс кражи — 50%.' : 'Сильная полиция снижает базовый шанс.'} Киберразведка и технологии корректируют итог. При поимке: штраф 12–35 млрд, репутация −10 и доверие −18.</p><div class="vault-assets">${theftAssets.length ? theftAssets.map(([id,asset]) => `<button data-theft="${id}" ${alreadyAttempted?'disabled':''}><i>${asset.icon}</i><span><b>${esc(asset.name)}</b><small>${esc(asset.description)} · в наличии ${c.vault[id]}</small></span></button>`).join('') : '<div class="vault-empty">Хранилище опустошено. Новые ценности появляются каждые 6 ходов.</div>'}</div>${alreadyAttempted?'<footer>АГЕНТЫ УЖЕ ДЕЙСТВОВАЛИ В ЭТОМ КВАРТАЛЕ</footer>':'<footer>МОЖНО ВЫБРАТЬ ОДНУ ЦЕННОСТЬ ЗА ХОД</footer>'}</section>` : '';
+  const theftAssets = relation != null && !c.eliminated ? Object.entries(app.state.definitions.assets || {}).filter(([id]) => (c.vault?.[id] || 0) > 0) : [];
+  const theftHtml = relation != null && !c.eliminated ? `<section class="theft-box"><header><div><small>ТАЙНАЯ СЛУЖБА · ХРАНИЛИЩЕ ЦЕЛИ</small><h3>Операция «Тихие руки»</h3></div><strong>${formatNumber(theftChance,1)}%</strong></header><div class="security-line"><span>Полиция цели: <b>${formatNumber(c.police)} / 100</b></span><span>Ваша репутация: <b>${formatNumber(own.reputation)} / 100</b></span></div><p>${c.police < 45 ? 'Полиция развита слабо: базовый шанс кражи — 50%.' : 'Сильная полиция снижает базовый шанс.'} Киберразведка и технологии корректируют итог. При поимке: штраф 12–35 млрд, репутация −10 и доверие −18.</p><div class="vault-assets">${theftAssets.length ? theftAssets.map(([id,asset]) => `<button data-theft="${id}" ${alreadyAttempted?'disabled':''}><i>${asset.icon}</i><span><b>${esc(asset.name)}</b><small>${esc(asset.description)} · в наличии ${c.vault[id]}</small></span></button>`).join('') : '<div class="vault-empty">Хранилище опустошено. Новые ценности появляются каждые 6 ходов.</div>'}</div>${alreadyAttempted?'<footer>АГЕНТЫ УЖЕ ДЕЙСТВОВАЛИ В ЭТОМ КВАРТАЛЕ</footer>':'<footer>МОЖНО ВЫБРАТЬ ОДНУ ЦЕННОСТЬ ЗА ХОД</footer>'}</section>` : '';
+  const permanentControl = c.occupation?.by === mine && c.occupation.permanent && !c.occupation.absorbed;
+  const projectedTribute = permanentControl ? (c.income || 0) * c.occupation.percent / 100 * .1 : 0;
+  const occupationManagement = permanentControl ? `<section class="occupation-command ${c.occupation.revolt ? 'danger' : ''}"><header><div><small>ОККУПАЦИОННАЯ АДМИНИСТРАЦИЯ</small><h3>${c.occupation.revolt ? 'Требуется решение по восстанию' : 'Риск и выгода контроля'}</h3></div><strong>${formatNumber(c.occupation.resistance,1)}%</strong></header><div class="resistance-meter"><i style="width:${Math.min(100,c.occupation.resistance||0)}%"></i></div><p>Доход контролёра: 10% с занятой доли экономики — сейчас около <b>${formatNumber(projectedTribute,1)} млрд/ход</b>. Пока идёт восстание, выплаты остановлены.</p><div><button data-occupation="release">Отпустить страну · репутация +6</button>${c.occupation.revolt?.status === 'active' ? `<button class="suppress" data-occupation="suppress" ${own.treasury<18||own.army.supplies<12?'disabled':''}>Подавить войсками · 18 млрд + 12 снабжения</button>` : ''}</div></section>` : '';
   let relationsHtml = '';
-  if (relation != null && atWar) {
+  if (c.eliminated) {
+    relationsHtml = `<div class="absorbed-state"><small>НОВАЯ ПОЛИТИЧЕСКАЯ КАРТА</small><b>${meta.flag} ${esc(meta.name)} больше не существует отдельно</b><p>Граница сохранена тонкой исторической линией, но цвет, земля и рейтинг принадлежат государству ${esc(controller?.name || c.absorbedBy)}.</p></div>`;
+  } else if (relation != null && atWar) {
     const war = (app.state.world.wars || []).find((item) => item.status === 'active' && [item.a,item.b].includes(mine) && [item.a,item.b].includes(app.selectedCode));
     const ourControl = c.occupation?.by === mine ? c.occupation.percent : 0;
     const enemyControl = own.occupation?.by === app.selectedCode ? own.occupation.percent : 0;
@@ -647,7 +658,12 @@ function renderInspector() {
     const lastWasOurs=last?.attacker===mine; const lastOurSuccess=last ? (lastWasOurs ? last.won : !last.won) : false;
     const battleReport=last?`<article class="battle-report ${lastOurSuccess?'victory':'defeat'}"><header><small>ПОСЛЕДНИЙ БОЕВОЙ ТАКТ · ${esc(last.tacticName||'живой фронт')}</small><b>${lastOurSuccess?'ПРОДВИЖЕНИЕ':'ДАВЛЕНИЕ ПРОТИВНИКА'}</b></header><div class="battle-numbers"><span><small>СИЛА НАСТУПЛЕНИЯ</small><b>${formatNumber(last.attackerPower)}</b></span><span><small>СИЛА СОПРОТИВЛЕНИЯ</small><b>${formatNumber(last.defenderPower)}</b></span><span><small>ВОЙСКА</small><b>${formatNumber(last.attackerTroops,1)} / ${formatNumber(last.defenderTroops,1)} тыс.</b></span><span><small>ПОТЕРИ ЗА ТАКТ</small><b>${formatNumber(last.attackerLosses,2)} / ${formatNumber(last.defenderLosses,2)} тыс.</b></span></div><p>${catalog(last.attacker)?.name||last.attacker} продвигает фронт на ${formatNumber(last.movement,1)}% · обновление идёт автоматически${last.distancePenalty?` · штраф расстояния ${last.distancePenalty}%`:''}</p></article>`:'';
     const trend=last?(last.attacker===mine?`Наши части продвигаются на ${formatNumber(last.movement,1)}%`:`Противник продвигается на ${formatNumber(last.movement,1)}%`):'Армии занимают позиции';
-    relationsHtml = `<div class="relation-box war-relation"><small>ВОЙНА · ЖИВОЙ ФРОНТ</small><b>${formatNumber(own.warScore[app.selectedCode] || 0,1)}</b><p>${frontText}</p></div><div class="front-progress ${enemyControl ? 'losing' : ''}"><i style="width:${frontValue}%"></i></div><div class="live-war-status"><header><span><i></i> БОИ ИДУТ В РЕАЛЬНОМ ВРЕМЕНИ</span><b>${esc(trend)}</b></header><p>Ничего нажимать не нужно. Сервер сам сталкивает армии каждые 1,4 секунды; более сильная коалиция непрерывно закрашивает землю на карте, обе стороны теряют солдат, технику, мораль и снабжение.</p><div><span>Наши войска <b>${formatNumber(own.army.manpower,1)} тыс.</b></span><span>Снабжение <b>${formatNumber(own.army.supplies,1)}</b></span><span>Мораль <b>${formatNumber(own.army.morale,1)}</b></span></div></div><div class="coalition-board"><div><small>НАША КОАЛИЦИЯ</small><b>${formatNumber(ourPower)} силы</b><span>${allyNames(ourSupport)}</span></div><i>VS</i><div><small>ПРОТИВНИК</small><b>${formatNumber(theirPower)} силы</b><span>${allyNames(enemySupport)}</span></div></div>${battleReport}<div class="war-benefits"><b>ИТОГ ВОЙНЫ</b><span>Скорость продвижения зависит от войск, оснащения, готовности, авиации, обороны, снабжения, морали, технологий и союзников. При 100% контроля победитель получает территорию, 45% оставшейся казны и 12% ВВП.</span></div><div class="diplomacy-actions war-actions"><button data-conflict="fortify" ${own.army.supplies<6?'disabled':''}>Усилить оборону · 6 снабжения</button><button data-diplomacy="peace">Предложить мир по линии фронта</button></div>`;
+    const weatherNames={clear:'☀ Ясно',rain:'☂ Ливни',mud:'≈ Распутица',snow:'❄ Снегопад',storm:'ϟ Шторм'};
+    const pressure=side==='a'?-war.front:war.front; const surgeRemaining=Math.max(0,Math.ceil(((war.surgeCooldowns?.[side]||0)-Date.now())/1000));
+    const surgeActive=war.surge?.side===side; const canSurge=pressure>=10&&!war.surge&&!surgeRemaining&&own.army.supplies>=15;
+    const surgeLabel=surgeActive?'Контрнаступление уже идёт':pressure<10?'Доступно при потере 10% земли':surgeRemaining?`Резервы через ${surgeRemaining} сек.`:own.army.supplies<15?'Нужно 15 снабжения':'Начать контрнаступление · 15 снабжения';
+    const warOutcome=war.kind==='uprising'?'Повстанцы пытаются вернуть фронт к 0%. Контролёр должен продвинуться до порога подавления. Бои и потери рассчитываются автоматически.':'Мир закрепляет текущую занятую долю: она даёт 10% дохода с контролируемой части, но создаёт протесты. При 100% страна полностью присоединяется: вся земля ваша, отдельная дань и восстания исчезают.';
+    relationsHtml = `<div class="relation-box war-relation"><small>${war.kind==='uprising'?'ВОССТАНИЕ':'ВОЙНА'} · ЖИВОЙ ФРОНТ</small><b>${formatNumber(own.warScore[app.selectedCode] || 0,1)}</b><p>${frontText}</p></div><div class="front-progress ${enemyControl ? 'losing' : ''}"><i style="width:${frontValue}%"></i></div><div class="live-war-status"><header><span><i></i> БОИ ИДУТ БЕЗ КНОПКИ АТАКИ</span><b>${esc(trend)}</b></header><p>Сервер сталкивает армии каждые 1,4 секунды. Неровный фронт двигается непрерывно, а части держатся у линии соприкосновения.</p><div><span>Наши войска <b>${formatNumber(own.army.manpower,1)} тыс.</b></span><span>Снабжение <b>${formatNumber(own.army.supplies,1)}</b></span><span>Мораль <b>${formatNumber(own.army.morale,1)}</b></span></div></div><div class="front-conditions"><span><small>ПОГОДА НА ФРОНТЕ</small><b>${weatherNames[war.weather]||weatherNames.clear}</b></span><span><small>ФАЗА ОПЕРАЦИИ</small><b>${surgeActive?'НАШ КОНТРУДАР':war.surge?'КОНТРУДАР ВРАГА':'ПОЗИЦИОННЫЕ БОИ'}</b></span></div><div class="coalition-board"><div><small>НАША КОАЛИЦИЯ</small><b>${formatNumber(ourPower)} силы</b><span>${allyNames(ourSupport)}</span></div><i>VS</i><div><small>ПРОТИВНИК</small><b>${formatNumber(theirPower)} силы</b><span>${allyNames(enemySupport)}</span></div></div>${battleReport}<div class="war-benefits"><b>${war.kind==='uprising'?'БОРЬБА ЗА НЕЗАВИСИМОСТЬ':'РИСК И ВЫГОДА МИРА'}</b><span>${warOutcome}</span></div><div class="diplomacy-actions war-actions"><button data-conflict="fortify" ${own.army.supplies<6?'disabled':''}>Усилить оборону · 6 снабжения</button><button class="surge-button" data-conflict="surge" ${canSurge?'':'disabled'}>${surgeLabel}</button>${war.kind==='uprising'?'':'<button data-diplomacy="peace">Предложить мир по линии фронта</button>'}</div>`;
   } else if (relation != null) {
     const relationBonus = myTechBonuses().relationBonus || 0;
     const blockingTreaty = own.treaties.some((treaty) => treaty === `alliance:${c.code}` || treaty === `nonaggression:${c.code}`);
@@ -656,10 +672,12 @@ function renderInspector() {
     const alreadyHelping=ownWar&&Boolean(warSide(ownWar,c.code)); const allyCost=supportCostFor(c);
     const canInvite=ownWar&&!selectedBusy&&relation>=35&&own.treasury>=allyCost&&((ownWar.supporters?.[mine===ownWar.a?'a':'b']||[]).length<3);
     const canDeclare = relation <= -45 && !blockingTreaty && !ownWar && !selectedBusy;
+    const hostileSeconds=Math.max(0,Math.ceil((120000-(Date.now()-(own.lastHostileActionAt||0)))/1000));
+    const hostileDisabled=hostileSeconds>0?'disabled':'';
     const coalitionInvite=ownWar&&!alreadyHelping?`<div class="coalition-call"><small>ПРИЗВАТЬ В ТЕКУЩУЮ ВОЙНУ</small><b>${meta.flag} ${esc(meta.name)} · контракт ${allyCost} млрд</b><p>Нужно доверие +35. Бот решает по отношениям; живой игрок получает выбор. Союзная армия будет сражаться и нести потери.</p><button data-war-support="invite" ${canInvite?'':'disabled'}>${relation<35?'Недостаточно доверия':own.treasury<allyCost?'Не хватает казны':selectedBusy?'Страна уже воюет':'Предложить военную помощь'}</button></div>`:'';
-    relationsHtml = `<div class="relation-box"><small>ДОВЕРИЕ МЕЖДУ СТРАНАМИ</small><b>${relation > 0 ? '+' : ''}${relation}</b><p>${relationText(relation)} · для войны нужно ≤ −45</p></div>${coalitionInvite}<div class="trust-guide"><div><span>УЛУЧШИТЬ</span><b>миссия +${12+relationBonus} · помощь +18</b></div><div><span>УХУДШИТЬ</span><b>санкции −22 · ультиматум −18 · учения −7</b></div><p>${ownWar?'Пока идёт война, выбирайте дружественные страны и зовите их в коалицию.':canDeclare?'Условия для объявления войны выполнены.':blockingTreaty?'Сначала разорвите союз или пакт о ненападении.':`Нужно снизить доверие ещё на ${relation + 45} пунктов.`}</p></div><div class="diplomacy-actions"><button data-diplomacy="embassy">Миссия +${12+relationBonus} · 8</button><button data-diplomacy="aid">Помощь +18 · 15</button><button data-diplomacy="trade">Торговый договор</button><button data-diplomacy="nonaggression">Пакт о ненападении</button><button data-diplomacy="alliance">Оборонный союз</button><button data-intelligence="operation">Разведоперация · 12</button><button class="hostile" data-diplomacy="sanction">Санкции −22</button><button class="hostile" data-diplomacy="pressure">Ультиматум −18 · 5</button><button class="hostile" data-conflict="exercise">Учения −7 · 12</button>${hasTreaty ? '<button class="hostile" data-diplomacy="break_treaties">Разорвать договоры −20</button>' : ''}<button class="declare-button" data-conflict="declare" ${canDeclare ? '' : 'disabled'}>Объявить войну</button></div>`;
+    relationsHtml = `<div class="relation-box"><small>ДОВЕРИЕ МЕЖДУ СТРАНАМИ</small><b>${relation > 0 ? '+' : ''}${relation}</b><p>${relationText(relation)} · для войны нужно ≤ −45</p></div>${coalitionInvite}<div class="trust-guide"><div><span>УЛУЧШИТЬ</span><b>миссия +${12+relationBonus} · помощь +18</b></div><div><span>УХУДШИТЬ</span><b>санкции −22 · ультиматум −18 · учения −7</b></div><p>${hostileSeconds?`Дипломаты готовят следующую враждебную акцию: ${hostileSeconds} сек. Ухудшать доверие кнопками можно только раз в 2 минуты.`:ownWar?'Пока идёт война, выбирайте дружественные страны и зовите их в коалицию.':canDeclare?'Условия для объявления войны выполнены.':blockingTreaty?'Сначала разорвите союз или пакт о ненападении.':`Нужно снизить доверие ещё на ${relation + 45} пунктов. Между враждебными действиями действует пауза 2 минуты.`}</p></div><div class="diplomacy-actions"><button data-diplomacy="embassy">Миссия +${12+relationBonus} · 8</button><button data-diplomacy="aid">Помощь +18 · 15</button><button data-diplomacy="trade">Торговый договор</button><button data-diplomacy="nonaggression">Пакт о ненападении</button><button data-diplomacy="alliance">Оборонный союз</button><button data-intelligence="operation">Разведоперация · 12</button><button class="hostile" data-diplomacy="sanction" ${hostileDisabled}>${hostileSeconds?`Санкции · ${hostileSeconds} сек.`:'Санкции −22'}</button><button class="hostile" data-diplomacy="pressure" ${hostileDisabled}>${hostileSeconds?`Ультиматум · ${hostileSeconds} сек.`:'Ультиматум −18 · 5'}</button><button class="hostile" data-conflict="exercise" ${hostileDisabled}>${hostileSeconds?`Учения · ${hostileSeconds} сек.`:'Учения −7 · 12'}</button>${hasTreaty ? `<button class="hostile" data-diplomacy="break_treaties" ${hostileDisabled}>${hostileSeconds?`Разрыв · ${hostileSeconds} сек.`:'Разорвать договоры −20'}</button>` : ''}<button class="declare-button" data-conflict="declare" ${canDeclare ? '' : 'disabled'}>Объявить войну</button></div>`;
   }
-  box.innerHTML = `<div class="country-heading"><span>${meta.flag}</span><div><h2>${esc(meta.name)}</h2><p>${esc(meta.capital)} · ${esc(regionName(meta.region))}</p></div></div><span class="owner-tag ${owner ? '' : 'bot'}">${owner ? `ИГРОК · ${esc(owner.name)}` : 'УПРАВЛЕНИЕ · МИРНЫЙ ИИ'}</span>${controller ? `<span class="controller-tag">ПОД КОНТРОЛЕМ · ${esc(controller.name)}</span>` : ''}<div class="country-stats"><div><small>ВВП</small><b>$${formatNumber(c.gdp)}</b></div><div><small>АРМИЯ</small><b>${c.militaryPower}</b></div><div><small>ЗЕМЛЯ</small><b>${formatNumber(c.territoryArea)} км²</b></div></div>${occupationNote}${relationsHtml}${theftHtml}<div class="quick-grid"><div class="quick-stat"><small>НАСЕЛЕНИЕ</small><b>${formatNumber(c.population,1)} млн</b></div><div class="quick-stat"><small>КАЗНА</small><b>${formatNumber(c.treasury,1)} млрд</b></div><div class="quick-stat"><small>ПОЛИЦИЯ</small><b>${formatNumber(c.police)} / 100</b></div><div class="quick-stat"><small>РЕПУТАЦИЯ</small><b>${formatNumber(c.reputation)} / 100</b></div></div>`;
+  box.innerHTML = `<div class="country-heading"><span>${c.eliminated ? controller?.flag || '◆' : meta.flag}</span><div><h2>${esc(meta.name)}</h2><p>${c.eliminated?'ИСТОРИЧЕСКАЯ ТЕРРИТОРИЯ':`${esc(meta.capital)} · ${esc(regionName(meta.region))}`}</p></div></div><span class="owner-tag ${owner ? '' : 'bot'}">${c.eliminated?'СТАТУС · ПОГЛОЩЕНО':owner ? `ИГРОК · ${esc(owner.name)}` : 'УПРАВЛЕНИЕ · МИРНЫЙ ИИ'}</span>${controller ? `<span class="controller-tag">${c.eliminated?'ЧАСТЬ ДЕРЖАВЫ':'ПОД КОНТРОЛЕМ'} · ${esc(controller.name)}</span>` : ''}<div class="country-stats"><div><small>ВВП</small><b>${c.eliminated?'—':`$${formatNumber(c.gdp)}`}</b></div><div><small>АРМИЯ</small><b>${c.eliminated?'—':c.militaryPower}</b></div><div><small>ЗЕМЛЯ</small><b>${formatNumber(c.territoryArea)} км²</b></div></div>${occupationNote}${occupationManagement}${relationsHtml}${theftHtml}<div class="quick-grid"><div class="quick-stat"><small>НАСЕЛЕНИЕ</small><b>${formatNumber(c.population,1)} млн</b></div><div class="quick-stat"><small>КАЗНА</small><b>${c.eliminated?'единая':`${formatNumber(c.treasury,1)} млрд`}</b></div><div class="quick-stat"><small>ПОЛИЦИЯ</small><b>${c.eliminated?'единая':`${formatNumber(c.police)} / 100`}</b></div><div class="quick-stat"><small>РЕПУТАЦИЯ</small><b>${c.eliminated?'—':`${formatNumber(c.reputation)} / 100`}</b></div></div>`;
   const deployment = $('#deploymentRange');
   const tacticSelect = $('#tacticSelect');
   const updateBattlePlan=()=>{ if(!deployment||!tacticSelect)return; const tactic=app.state.definitions.tactics?.[tacticSelect.value]||{}; const fraction=Number(deployment.value)/100; const tech=myTechBonuses(); const doctrine=app.state.definitions.doctrines?.[own.doctrine]||{}; const supply=(4+fraction*10)*(tactic.supply||1)*(doctrine.supply||1)*(1-(tech.supplyUsePct||0)); $('#deploymentValue').textContent=`${deployment.value}% · ${formatNumber(own.army.manpower*fraction,1)} тыс.`; $('#supplyCost').textContent=formatNumber(supply,1); $('#tacticDescription').textContent=`${tactic.description||''}${Number(deployment.value)<(tactic.minDeployment||10)?` Минимум: ${tactic.minDeployment}% армии.`:''}`; };
@@ -676,6 +694,8 @@ $('#countryInspector').addEventListener('click', (event) => {
   if (intelligence) send({ type: 'action', action: 'intelligence', id: intelligence.dataset.intelligence, target: app.selectedCode });
   const theft = event.target.closest('[data-theft]');
   if (theft) send({ type: 'action', action: 'theft', id: theft.dataset.theft, target: app.selectedCode });
+  const occupation = event.target.closest('[data-occupation]');
+  if (occupation) send({ type: 'action', action: 'occupation', id: occupation.dataset.occupation, target: app.selectedCode });
   if (event.target.closest('[data-war-support]')) send({ type:'action', action:'war_support', id:'invite', target:app.selectedCode });
 });
 
@@ -690,7 +710,7 @@ function openCountryModal() {
 function renderCountryGrid(query = '') {
   if (!app.state) return;
   const text = query.trim().toLocaleLowerCase('ru');
-  const list = app.state.catalog.filter((c) => !text || c.name.toLocaleLowerCase('ru').includes(text) || regionName(c.region).toLocaleLowerCase('ru').includes(text) || c.englishName.toLowerCase().includes(text));
+  const list = app.state.catalog.filter((c) => !country(c.code)?.eliminated && (!text || c.name.toLocaleLowerCase('ru').includes(text) || regionName(c.region).toLocaleLowerCase('ru').includes(text) || c.englishName.toLowerCase().includes(text)));
   $('#countryGrid').innerHTML = list.map((meta) => {
     const owner = ownerOf(meta.code); const selected = app.modalCode === meta.code;
     return `<button class="country-option${selected ? ' selected' : ''}" data-country="${meta.code}" ${owner ? 'disabled' : ''}><span>${meta.flag}</span><div><b>${esc(meta.name)}</b><small>${owner ? `ЗАНЯТА · ${esc(owner.name)}` : `${esc(regionName(meta.region))} · СВОБОДНА`}</small></div></button>`;
@@ -746,6 +766,16 @@ $('#closeTechTree').addEventListener('click', () => $('#techModal').classList.ad
 $('#techTree').addEventListener('click', (event) => {
   const button = event.target.closest('[data-tech]');
   if (button) send({ type: 'action', action: 'technology', id: button.dataset.tech });
+});
+
+function closeGuide() { $('#guideModal').classList.add('hidden'); }
+$('#openGuide').addEventListener('click', () => $('#guideModal').classList.remove('hidden'));
+$('#closeGuide').addEventListener('click', closeGuide);
+$('#guideModal').addEventListener('click', (event) => { if (event.target.closest('[data-close-guide]')) closeGuide(); });
+$('#guideTabs').addEventListener('click', (event) => {
+  const button=event.target.closest('[data-guide]'); if(!button)return;
+  $$('#guideTabs [data-guide]').forEach((item)=>item.classList.toggle('active',item===button));
+  $$('[data-guide-page]').forEach((page)=>page.classList.toggle('active',page.dataset.guidePage===button.dataset.guide));
 });
 
 class MusicEngine {
@@ -855,8 +885,13 @@ setInterval(() => {
   if (!app.state) return;
   const seconds = Math.max(0, Math.ceil((app.state.world.nextTurnAt - Date.now()) / 1000));
   $('#turnTimer').textContent = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+  const hostileSeconds=Math.max(0,Math.ceil((120000-(Date.now()-(myCountry()?.lastHostileActionAt||0)))/1000));
+  if (hostileSeconds !== app.lastHostileSecond && app.selectedCode && !activeWarForCountry(me()?.countryCode)) {
+    app.lastHostileSecond=hostileSeconds;
+    renderInspector();
+  }
 }, 1000);
 
 window.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') { $('#inspector').classList.remove('open'); $('#controlPanel').classList.remove('open'); $('#techModal').classList.add('hidden'); }
+  if (event.key === 'Escape') { $('#inspector').classList.remove('open'); $('#controlPanel').classList.remove('open'); $('#techModal').classList.add('hidden'); closeGuide(); }
 });

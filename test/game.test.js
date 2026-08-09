@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  CATALOG, createWorld, selectCountry, performAction, advanceTurn, advanceWars, getRelation, incomeFor, theftChance
+  CATALOG, createWorld, selectCountry, performAction, advanceTurn, advanceWars, advanceResistance, getRelation, incomeFor, ranking, theftChance
 } = require('../game');
 
 test('catalog contains 195 unique playable states with Russian names', () => {
@@ -138,7 +138,8 @@ test('peace preserves occupied land and it pays tribute on later turns', () => {
   assert.equal(world.countries.UZB.occupation.permanent, true);
   advanceTurn(world);
   assert.equal(world.countries.UZB.lastTribute.to, 'KAZ');
-  assert.ok(world.countries.UZB.lastTribute.amount > 0);
+  const expected = Math.round(incomeFor(world.countries.UZB) * world.countries.UZB.occupation.percent / 100 * .1 * 10) / 10;
+  assert.equal(world.countries.UZB.lastTribute.amount, expected);
 });
 
 test('full occupation annexes land and transfers gold and part of the economy', () => {
@@ -159,6 +160,10 @@ test('full occupation annexes land and transfers gold and part of the economy', 
   assert.equal(defender.controllerCode, 'KAZ');
   assert.equal(defender.occupation.percent, 100);
   assert.equal(defender.defeated, true);
+  assert.equal(defender.eliminated, true);
+  assert.equal(defender.absorbedBy, 'KAZ');
+  assert.equal(incomeFor(defender), 0);
+  assert.equal(ranking(world).some((item) => item.code === 'UZB'), false);
   assert.equal(attacker.annexed.includes('UZB'), true);
   assert.ok(attacker.gdp > beforeGdp);
   assert.ok(defender.treasury < availableGold);
@@ -232,7 +237,7 @@ test('front fortification spends an operation and supplies but no gold', () => {
   assert.equal(world.wars[0].operationsByTurn['1:a'], 1);
 });
 
-test('ultimatums and treaty breaks clearly lower trust toward war threshold', () => {
+test('hostile diplomacy is limited to one relation-lowering button every two minutes', () => {
   const world = createWorld('trust-test');
   const player = { id: 'p1', name: 'Лидер', countryCode: null };
   selectCountry(world, player, 'KAZ');
@@ -242,9 +247,89 @@ test('ultimatums and treaty breaks clearly lower trust toward war threshold', ()
   assert.equal(getRelation(world, 'KAZ', 'UZB'), before - 18);
   world.countries.KAZ.treaties.push('trade:UZB');
   world.countries.UZB.treaties.push('trade:KAZ');
+  const blocked = performAction(world, player, { action: 'diplomacy', id: 'break_treaties', target: 'UZB' });
+  assert.equal(blocked.ok, false);
+  assert.match(blocked.error, /через/);
+  world.countries.KAZ.lastHostileActionAt -= 120001;
   assert.equal(performAction(world, player, { action: 'diplomacy', id: 'break_treaties', target: 'UZB' }).ok, true);
   assert.equal(world.countries.KAZ.treaties.includes('trade:UZB'), false);
   assert.equal(getRelation(world, 'KAZ', 'UZB'), before - 38);
+});
+
+test('a pressured defender can spend supplies on a six-tick counteroffensive', () => {
+  const world = createWorld('surge-test');
+  const player = { id: 'p1', name: 'Лидер', countryCode: null };
+  selectCountry(world, player, 'KAZ');
+  world.relations['KAZ:UZB'] = -70;
+  performAction(world, player, { action: 'conflict', id: 'declare', target: 'UZB' });
+  const war = world.wars[0]; war.front = -25;
+  world.countries.KAZ.army.supplies = 80;
+  const result = performAction(world, player, { action: 'conflict', id: 'surge', target: 'UZB' });
+  assert.equal(result.ok, true);
+  assert.equal(war.surge.side, 'a');
+  assert.equal(war.surge.expiresAtTick - war.surge.startedAtTick, 6);
+  assert.equal(world.countries.KAZ.army.supplies, 65);
+});
+
+test('permanent occupation can erupt into revolt and be released peacefully', () => {
+  const world = createWorld('resistance-test');
+  const player = { id: 'p1', name: 'Лидер', countryCode: null };
+  selectCountry(world, player, 'KAZ');
+  const subject = world.countries.UZB;
+  subject.occupation = { by: 'KAZ', percent: 62, permanent: true, warId: 'peace-line', resistance: 92, resistanceChecks: 0, nextResistanceAt: 0, revolt: null };
+  let now = Date.now();
+  for (let index = 0; index < 80 && !subject.occupation.revolt; index += 1) {
+    now += 20000;
+    advanceResistance(world, now);
+  }
+  assert.equal(subject.occupation.revolt.status, 'active');
+  const result = performAction(world, player, { action: 'occupation', id: 'release', target: 'UZB' });
+  assert.equal(result.ok, true);
+  assert.equal(subject.occupation, null);
+  assert.equal(subject.eliminated, false);
+});
+
+test('an occupation revolt can be suppressed only through a live uprising war', () => {
+  const world = createWorld('suppression-test');
+  const player = { id: 'p1', name: 'Лидер', countryCode: null };
+  selectCountry(world, player, 'KAZ');
+  const controller = world.countries.KAZ; const subject = world.countries.UZB;
+  controller.treasury = 200; controller.army.supplies = 80;
+  subject.occupation = { by: 'KAZ', percent: 46, permanent: true, warId: 'peace-line', resistance: 76, resistanceChecks: 4, nextResistanceAt: 0, revolt: { status: 'active', startedAt: Date.now() } };
+  const result = performAction(world, player, { action: 'occupation', id: 'suppress', target: 'UZB' });
+  assert.equal(result.ok, true);
+  const war = world.wars.find((item) => item.status === 'active');
+  assert.equal(war.kind, 'uprising');
+  assert.equal(war.front, 46);
+  assert.ok(war.suppressionTarget > war.front);
+  assert.equal(subject.occupation.revolt.status, 'fighting');
+});
+
+test('a successful suppression keeps partial control while a successful revolt restores all land', () => {
+  const scenario = (seed, controllerStrong) => {
+    const world = createWorld(seed); const player = { id: 'p1', name: 'Лидер', countryCode: null };
+    selectCountry(world, player, 'KAZ');
+    const controller = world.countries.KAZ; const subject = world.countries.UZB;
+    controller.treasury = 300; controller.army.supplies = 100;
+    subject.occupation = { by: 'KAZ', percent: controllerStrong ? 42 : 12, permanent: true, warId: 'peace-line', resistance: 80, resistanceChecks: 5, nextResistanceAt: 0, revolt: { status: 'active', startedAt: Date.now() } };
+    const strong = { manpower: 500, equipment: 100, readiness: 100, air: 100, navy: 80, defense: 100, supplies: 100, morale: 100, experience: 80, medical: 50 };
+    const weak = { manpower: 5, equipment: 5, readiness: 15, air: 1, navy: 1, defense: 8, supplies: 35, morale: 25, experience: 2, medical: 2 };
+    Object.assign(controller.army, controllerStrong ? strong : weak);
+    Object.assign(subject.army, controllerStrong ? weak : strong);
+    assert.equal(performAction(world, player, { action: 'occupation', id: 'suppress', target: 'UZB' }).ok, true);
+    const war = world.wars[0]; let now = war.nextBattleAt;
+    for (let index = 0; index < 120 && war.status === 'active'; index += 1) { advanceWars(world, now); now = war.nextBattleAt; }
+    return { world, war, subject };
+  };
+  const suppressed = scenario('uprising-suppressed', true);
+  assert.equal(suppressed.war.status, 'suppressed');
+  assert.equal(suppressed.subject.occupation.permanent, true);
+  assert.equal(suppressed.subject.occupation.revolt, null);
+  assert.ok(suppressed.subject.occupation.percent < 100);
+  const liberated = scenario('uprising-liberated', false);
+  assert.equal(liberated.war.status, 'liberated');
+  assert.equal(liberated.subject.occupation, null);
+  assert.equal(liberated.subject.eliminated, false);
 });
 
 test('technology tree consumes strategic points and applies a permanent bonus', () => {
