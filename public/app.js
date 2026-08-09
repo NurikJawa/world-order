@@ -289,7 +289,7 @@ function connect(connection) {
       toast(message.message);
       if(message.message==='Новость опубликована для всех игроков'){
         app.newsDraft={headline:'',text:'',category:'statement'};
-        if(app.newsTab==='players')renderNews();
+        if(app.newsTab==='players')renderNews({rebuildComposer:true});
       }
     }
     if (message.type === 'error') {
@@ -903,7 +903,7 @@ $('#countryInspector').addEventListener('click', (event) => {
   if(event.target.closest('[data-media-target]'))send({type:'action',action:'media_campaign',id:'discredit',target:app.selectedCode});
 });
 
-function renderNews() {
+function renderNews({ rebuildComposer = false } = {}) {
   const feed=$('#newsFeed');const categories=app.state.definitions.playerNewsCategories||{};
   $$('#newsTabs [data-news-tab]').forEach((button)=>button.classList.toggle('active',button.dataset.newsTab===app.newsTab));
   if(app.newsTab==='world'){
@@ -912,7 +912,17 @@ function renderNews() {
     const c=myCountry();const seconds=Math.max(0,Math.ceil((30000-(Date.now()-(c?.lastPlayerNewsAt||0)))/1000));
     const composer=c?`<form id="playerNewsComposer" class="player-news-composer"><header><div><small>НАЦИОНАЛЬНОЕ ИНФОРМАГЕНТСТВО</small><b>${catalog(c.code)?.flag||''} ${esc(catalog(c.code)?.name||c.code)}</b></div><span>ПУБЛИКАЦИЯ ДЛЯ ВСЕГО МИРА</span></header><input id="playerNewsHeadline" maxlength="90" placeholder="Заголовок новости…" value="${esc(app.newsDraft.headline)}"><textarea id="playerNewsText" maxlength="420" placeholder="Напишите заявление, репортаж или сообщение другим игрокам…">${esc(app.newsDraft.text)}</textarea><div class="news-compose-row"><select id="playerNewsCategory">${Object.entries(categories).map(([id,item])=>`<option value="${id}" ${app.newsDraft.category===id?'selected':''}>${item.icon} ${esc(item.name)}</option>`).join('')}</select><span id="playerNewsCounter">${app.newsDraft.text.length} / 420</span></div><button id="publishPlayerNews" ${seconds?'disabled':''}>${seconds?`РЕДАКЦИЯ ГОТОВИТ ВЫПУСК · ${seconds} СЕК.`:'ОПУБЛИКОВАТЬ НОВОСТЬ'}</button></form>`:'';
     const articles=(app.state.world.playerNews||[]).map((item)=>{const category=categories[item.category]||categories.statement||{};const meta=catalog(item.authorCode);return `<article class="player-news-card ${category.tone||'blue'}"><header><span>${meta?.flag||'🏳️'}</span><div><small>${category.icon||'◈'} ${esc(category.name||'Заявление')}</small><b>${esc(meta?.name||item.authorCode)}</b></div></header><h3>${esc(item.headline)}</h3><p>${esc(item.text)}</p><footer><span>Автор: ${esc(item.authorName||'Лидер')}</span><time>${newsClock(item.createdAt)} · ХОД ${item.turn}</time></footer></article>`}).join('');
-    feed.innerHTML=`${composer}<div class="player-news-list">${articles||'<div class="news-empty"><b>Пока нет публикаций игроков</b><span>Станьте первым лидером, который обратится ко всему миру.</span></div>'}</div>`;
+    const articleList=articles||'<div class="news-empty"><b>Пока нет публикаций игроков</b><span>Станьте первым лидером, который обратится ко всему миру.</span></div>';
+    const existingComposer=$('#playerNewsComposer');
+    const existingList=feed.querySelector('.player-news-list');
+    if(!rebuildComposer&&existingComposer&&existingList){
+      // A full server state can arrive while the player is typing. Only refresh the
+      // read-only feed so the live input node, focus, selection and resized textarea survive.
+      existingList.innerHTML=articleList;
+      updateNewsCooldown();
+    }else{
+      feed.innerHTML=`${composer}<div class="player-news-list">${articleList}</div>`;
+    }
   }
   renderHeadline();
 }
