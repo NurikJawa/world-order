@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  CATALOG, createWorld, selectCountry, performAction, advanceTurn, advanceWars, advanceResistance, getRelation, incomeFor, ranking, theftChance
+  CATALOG, EXTRACTION_COMMODITIES, COMMODITY_MARKET_INTERVAL_MS, createWorld, migrateWorld, selectCountry, performAction, advanceTurn, advanceWars, advanceResistance, getRelation, incomeFor, ranking, theftChance, commodityMarketForTime, updateCommodityMarket
 } = require('../game');
 
 test('catalog contains 195 unique playable states with Russian names', () => {
@@ -557,4 +557,82 @@ test('completing a non-military victory path records the country in the hall of 
   assert.equal(country.victoryAchieved, true);
   assert.equal(world.hallOfFame[0].code, 'KAZ');
   assert.equal(world.hallOfFame[0].path, 'peace');
+});
+
+test('every country receives physical deposits with plausible bounded properties', () => {
+  const world = createWorld('physical-deposits');
+  for (const country of Object.values(world.countries)) {
+    assert.ok(country.extractionSites.length >= 1 && country.extractionSites.length <= 3);
+    assert.equal(new Set(country.extractionSites.map((site) => site.type)).size, country.extractionSites.length);
+    for (const site of country.extractionSites) {
+      assert.ok(EXTRACTION_COMMODITIES[site.type]);
+      assert.equal(site.id.startsWith(`${country.code}-`), true);
+      assert.ok(site.purchaseCost > 0 && site.baseRate > 0 && site.baseCapacity > 0);
+      assert.ok(site.position.u >= 0 && site.position.u <= 1 && site.position.v >= 0 && site.position.v <= 1);
+    }
+  }
+});
+
+test('a player can buy a mine, accumulate output, collect it and sell to a supplier', () => {
+  const world = createWorld('extraction-cycle');
+  const player = { id: 'p1', name: 'Промышленник', countryCode: null };
+  selectCountry(world, player, 'KAZ');
+  const country = world.countries.KAZ; const site = country.extractionSites[0];
+  country.treasury = 1000;
+  const beforePurchase = country.treasury;
+  assert.equal(performAction(world, player, { action: 'extraction', id: 'buy', target: 'KAZ', siteId: site.id }).ok, true);
+  assert.equal(site.ownerCode, 'KAZ');
+  assert.equal(country.treasury, beforePurchase - site.purchaseCost);
+
+  site.lastAccruedAt -= 10 * 60 * 1000;
+  assert.equal(performAction(world, player, { action: 'extraction', id: 'collect', target: 'KAZ', siteId: site.id }).ok, true);
+  const extracted = country.commodityStorage[site.type];
+  assert.ok(extracted > 0);
+  assert.equal(site.stored, 0);
+
+  world.commodityMarket.multipliers[site.type] = 2;
+  const beforeSale = country.treasury;
+  assert.equal(performAction(world, player, { action: 'extraction', id: 'sell', commodity: site.type }).ok, true);
+  assert.equal(country.commodityStorage[site.type], 0);
+  assert.equal(country.treasury, Math.round((beforeSale + extracted * EXTRACTION_COMMODITIES[site.type].basePrice * 2) * 10) / 10);
+});
+
+test('foreign deposits cannot be bought and an owned mine can be upgraded', () => {
+  const world = createWorld('extraction-permissions');
+  const player = { id: 'p1', name: 'Недропользователь', countryCode: null };
+  selectCountry(world, player, 'KAZ');
+  const country = world.countries.KAZ; country.treasury = 1000;
+  const foreignSite = world.countries.UZB.extractionSites[0];
+  assert.equal(performAction(world, player, { action: 'extraction', id: 'buy', target: 'UZB', siteId: foreignSite.id }).ok, false);
+  const ownSite = country.extractionSites[0];
+  performAction(world, player, { action: 'extraction', id: 'buy', target: 'KAZ', siteId: ownSite.id });
+  const oldRate = ownSite.baseRate;
+  assert.equal(performAction(world, player, { action: 'extraction', id: 'upgrade', target: 'KAZ', siteId: ownSite.id }).ok, true);
+  assert.equal(ownSite.level, 2);
+  assert.ok(ownSite.baseRate * (1 + (ownSite.level - 1) * .68) > oldRate);
+});
+
+test('the commodity market is shared, deterministic and refreshes every ten minutes', () => {
+  const start = Math.floor(2_000_000_000_000 / COMMODITY_MARKET_INTERVAL_MS) * COMMODITY_MARKET_INTERVAL_MS;
+  const first = commodityMarketForTime(start);
+  const same = commodityMarketForTime(start + COMMODITY_MARKET_INTERVAL_MS - 1);
+  const next = commodityMarketForTime(start + COMMODITY_MARKET_INTERVAL_MS);
+  assert.deepEqual(first, same);
+  assert.notEqual(first.cycle, next.cycle);
+  assert.ok(Object.values(first.multipliers).every((value) => value >= .7 && value <= 2));
+  assert.notDeepEqual(first.multipliers, next.multipliers);
+  const world = createWorld('market-rollover'); world.commodityMarket = first;
+  assert.equal(updateCommodityMarket(world, start + COMMODITY_MARKET_INTERVAL_MS), true);
+  assert.deepEqual(world.commodityMarket, next);
+});
+
+test('old saves migrate without losing countries and gain extraction storage', () => {
+  const world = createWorld('legacy-extraction');
+  delete world.commodityMarket;
+  delete world.countries.KAZ.commodityStorage;
+  delete world.countries.KAZ.extractionSites;
+  migrateWorld(world);
+  assert.ok(world.commodityMarket);
+  assert.deepEqual(Object.keys(world.countries.KAZ.commodityStorage).sort(), Object.keys(EXTRACTION_COMMODITIES).sort());
+  assert.ok(world.countries.KAZ.extractionSites.length >= 1);
 });

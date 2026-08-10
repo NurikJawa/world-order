@@ -67,6 +67,7 @@
       <div class="resource"><span class="resource-icon">♟</span><div><small>ВЛИЯНИЕ</small><b id="influence">—</b></div></div>
       <div class="resource knowledge"><span class="resource-icon">⌬</span><div><small>ОЧКИ РАЗВИТИЯ</small><b id="techPoints">—</b></div><em id="techPerTurn">—</em></div>
       <div class="resource"><span class="resource-icon">◉</span><div><small>СТАБИЛЬНОСТЬ</small><b id="stability">—</b></div></div>
+      <button id="openCommodityMarket" class="commodity-chip"><span>⛏</span><div><small>СЫРЬЕВАЯ БИРЖА</small><b id="commodityBestRate">—</b></div><em id="commodityTimer">10:00</em></button>
       <button id="mobileMenu" class="mobile-menu">☰</button>
     </section>
 
@@ -98,6 +99,7 @@
             <button data-layer="economy">Экономика</button>
             <button data-layer="military">Сила</button>
             <button data-layer="relations">Отношения</button>
+            <button data-layer="resources">Сырьё</button>
           </div>
         </div>
         <div id="mapViewport" class="map-viewport">
@@ -111,10 +113,11 @@
             <g id="mapGroup"></g>
             <g id="frontGroup"></g>
             <g id="markerGroup"></g>
+            <g id="extractionGroup"></g>
           </svg>
           <div id="mapTooltip" class="map-tooltip hidden"></div>
           <div class="map-controls"><button id="zoomIn">+</button><button id="zoomOut">−</button><button id="resetMap">⌂</button></div>
-          <div class="map-legend"><span><i class="human"></i>Игрок</span><span><i class="front"></i>Захвачено</span><span><i class="selected"></i>Выбрано</span><span><i class="micro"></i>Микрогосударство</span></div>
+          <div class="map-legend"><span><i class="human"></i>Игрок</span><span><i class="front"></i>Захвачено</span><span><i class="selected"></i>Выбрано</span><span><i class="deposit"></i>Месторождение</span><span><i class="micro"></i>Микрогосударство</span></div>
           <div class="map-coordinates">POLITICAL MAP · LIVE SIMULATION</div>
         </div>
       </section>
@@ -141,6 +144,15 @@
         <div><span id="confirmFlag">🏳️</span><div><small>ВЫ ВЫБИРАЕТЕ</small><b id="confirmName">—</b></div></div>
         <button id="confirmCountry" class="primary-btn">Подтвердить выбор</button>
       </div>
+    </section>
+  </div>
+
+  <div id="commodityModal" class="commodity-modal hidden">
+    <div class="commodity-backdrop" data-close-commodity></div>
+    <section class="commodity-terminal" role="dialog" aria-modal="true" aria-labelledby="commodityTitle">
+      <header><div><small>МИРОВАЯ СЫРЬЕВАЯ СЕТЬ · ОБЩИЕ ЦЕНЫ ДЛЯ ВСЕХ ИГРОКОВ</small><h2 id="commodityTitle">Месторождения и поставщики</h2><p>Покупайте предприятия, собирайте добычу ЛКМ на карте и выбирайте момент продажи.</p></div><div class="market-clock"><small>НОВЫЕ КОНТРАКТЫ ЧЕРЕЗ</small><b id="commodityModalTimer">10:00</b><span>коэффициенты 0,70×–2,00×</span></div><button id="closeCommodityMarket" aria-label="Закрыть">×</button></header>
+      <div class="commodity-layout"><section><div class="commodity-section-title"><span>⛏</span><div><small>ФИЗИЧЕСКИЕ ОБЪЕКТЫ</small><b id="commodityCountryTitle">Мои месторождения</b></div></div><div id="extractionSiteList" class="extraction-site-list"></div></section><section><div class="commodity-section-title"><span>▤</span><div><small>ГОСУДАРСТВЕННЫЙ СКЛАД</small><b>Сырьё и текущие контракты</b></div></div><div id="commodityWarehouse" class="commodity-warehouse"></div></section></div>
+      <footer><span><i></i> Рынок синхронизирован между всеми игроками комнаты</span><p>Накопление останавливается при заполнении резервуара. До 24 часов добычи сохраняется во время отсутствия.</p></footer>
     </section>
   </div>
 
@@ -205,8 +217,9 @@
           <div class="guide-tip"><b>Главное правило</b><p>Не пытайтесь держать все показатели на максимуме. Выбирайте политическую опору режима и заранее готовьтесь к реакции недовольных групп.</p></div>
         </article>
         <article data-guide-page="resources">
-          <div class="guide-hero"><span>03</span><div><small>ЛОГИСТИКА И МИРОВЫЕ ПОТРЯСЕНИЯ</small><h3>Деньги больше не заменяют топливо и продовольствие</h3><p>Каждая страна производит и хранит еду, топливо, металлы, редкие материалы и энергию. Запасы обновляются каждый квартал и расходуются населением, промышленностью, проектами и армией.</p></div></div>
-          <div class="guide-grid"><section><b>Дефицит</b><p>Недостаток еды и энергии режет доход, счастье и стабильность. Нехватка топлива уменьшает военную силу и готовность армии.</p></section><section><b>Торговые маршруты</b><p>Выберите страну с нужной добычей и предложите поставку. Каждый ход продавец передаёт 3 единицы ресурса, покупатель автоматически оплачивает контракт. Война и санкции блокируют маршрут.</p></section><section><b>Мировые кризисы</b><p>Раз в несколько лет возникают пандемии, обвалы рынков, кибератаки и дефицит ресурсов. У игрока есть несколько ответов с разной ценой; мирные боты тоже выбирают стратегию.</p></section><section><b>Военная логистика</b><p>Бронетехника и авиация расходуют топливо даже в мирное время, а живой фронт дополнительно сжигает еду и горючее каждый боевой такт.</p></section></div>
+          <div class="guide-hero"><span>03</span><div><small>МЕСТОРОЖДЕНИЯ, ЛОГИСТИКА И БИРЖА</small><h3>Ресурс теперь нужно найти, добыть и выгодно продать</h3><p>Внутри каждой страны физически расположены шахты, карьеры, скважины и урановые комплексы. Они работают в реальном времени независимо от квартального хода.</p></div></div>
+          <div class="guide-grid"><section><b>Покупка предприятия</b><p>Включите слой «Сырьё» или найдите значок внутри своей страны. Нажмите ЛКМ, изучите качество месторождения и купите его за деньги из казны. Чужие объекты доступны только для просмотра.</p></section><section><b>Сбор ЛКМ</b><p>Купленный объект постепенно наполняет резервуар. ЛКМ по его значку мгновенно переносит всю добычу на государственный склад. Если резервуар заполнен, производство останавливается.</p></section><section><b>Биржа раз в 10 минут</b><p>Atlas Steel, Aurum Reserve и другие поставщики одновременно для всех игроков меняют спрос от 0,70× до 2,00×. Можно продать сразу или дождаться удачного контракта.</p></section><section><b>Продать или переработать</b><p>Нефть превращается в топливо, руда — в металлы, уран и уголь — в энергию, редкие земли — в материалы. Золото предназначено для продажи. Модернизация повышает скорость и ёмкость.</p></section><section><b>Дефицит</b><p>Недостаток еды и энергии режет доход, счастье и стабильность. Нехватка топлива уменьшает военную силу и готовность армии.</p></section><section><b>Торговые маршруты</b><p>Обычные межгосударственные поставки продолжают работать каждый квартал. Война и санкции блокируют маршрут, но биржевой склад остаётся у владельца.</p></section><section><b>Накопление без игры</b><p>Сервер рассчитывает до 24 часов пропущенной добычи при следующем действии. Больше накопить нельзя: ёмкость конкретного предприятия всё равно ограничена.</p></section><section><b>Мировые кризисы</b><p>Топливный шок или финансовый обвал меняет обычную экономику. Высокий биржевой коэффициент в такой момент может спасти бюджет или снабжение армии.</p></section></div>
+          <div class="guide-tip"><b>Торговая тактика</b><p>Коэффициент одинаков для всех игроков, поэтому при значении около 2× конкуренты тоже получают шанс разбогатеть. Следите за таймером и не держите производственные резервуары заполненными.</p></div>
         </article>
         <article data-guide-page="economy">
           <div class="guide-hero"><span>02</span><div><small>КАЗНА И РАЗВИТИЕ</small><h3>Каждая сильная армия начинается с бюджета</h3><p>Доход зависит от ВВП, налогов, промышленности, инфраструктуры, энергетики, торговли и технологий. Война и чужая оккупация уменьшают его.</p></div></div>

@@ -100,6 +100,9 @@ const app = {
   connectionTimer: null,
   connection: null,
   visualOccupations: {},
+  sitePoints: new Map(),
+  extractionSignature: '',
+  marketFocus: null,
   warRenderStep: 0,
   recoveryTimer: null,
   lastRecoverySave: 0
@@ -429,6 +432,9 @@ function buildMap() {
   $('#frontGroup').innerHTML = '';
   const markerGroup = $('#markerGroup');
   markerGroup.innerHTML = '';
+  $('#extractionGroup').innerHTML = '';
+  app.sitePoints.clear();
+  app.extractionSignature = '';
   const mappedCodes = new Set();
   for (const feature of app.mapData.features) {
     const code = feature.properties.code;
@@ -497,6 +503,75 @@ function moveTooltip(event) {
   tooltip.style.top = `${Math.min(innerHeight - 75, event.clientY + 12)}px`;
 }
 function hideTooltip() { $('#mapTooltip').classList.add('hidden'); }
+
+function clientHash(value) {
+  let hash = 2166136261;
+  for (const char of String(value)) { hash ^= char.charCodeAt(0); hash = Math.imul(hash, 16777619); }
+  return (hash >>> 0) / 4294967295;
+}
+function siteRate(site) { return (site.baseRate || app.state?.definitions?.commodities?.[site.type]?.rate || .1) * (1 + Math.max(0, (site.level || 1) - 1) * .68); }
+function siteCapacity(site) { return (site.baseCapacity || app.state?.definitions?.commodities?.[site.type]?.capacity || 5) * (1 + Math.max(0, (site.level || 1) - 1) * .72); }
+function siteUpgradeCost(site) { return Math.round((site.purchaseCost || 50) * (.55 + (site.level || 1) * .32)); }
+function estimatedSiteStored(site, now = Date.now()) {
+  if (!site.ownerCode) return Number(site.stored) || 0;
+  const elapsed = Math.max(0, Math.min(24 * 60, (now - (Number(site.lastAccruedAt) || now)) / 60000));
+  return Math.min(siteCapacity(site), (Number(site.stored) || 0) + elapsed * siteRate(site));
+}
+function extractionPoint(code, site) {
+  const cacheKey = `${code}:${site.id}`; if (app.sitePoints.has(cacheKey)) return app.sitePoints.get(cacheKey);
+  const path = document.querySelector(`.country[data-code="${code}"]`); let point = null;
+  if (path) {
+    const box = path.getBBox();
+    for (let attempt = 0; attempt < 38; attempt += 1) {
+      const u = (Number(site.position?.u || 0) + clientHash(`${site.id}:x:${attempt}`) + attempt * .173) % 1;
+      const v = (Number(site.position?.v || 0) + clientHash(`${site.id}:y:${attempt}`) + attempt * .277) % 1;
+      const candidate = { x: box.x + box.width * (.08 + u * .84), y: box.y + box.height * (.08 + v * .84) };
+      try { if (!path.isPointInFill || path.isPointInFill(new DOMPoint(candidate.x, candidate.y))) { point = [candidate.x, candidate.y]; break; } } catch { point = [candidate.x, candidate.y]; break; }
+    }
+  }
+  if (!point) {
+    const meta = catalog(code); const base = meta ? project([meta.latlng[1], meta.latlng[0]]) : [600, 300];
+    point = [base[0] + (Number(site.position?.u || .5) - .5) * 5, base[1] + (Number(site.position?.v || .5) - .5) * 5];
+  }
+  app.sitePoints.set(cacheKey, point); return point;
+}
+function showExtractionTooltip(event, code, site) {
+  const definition = app.state.definitions.commodities?.[site.type] || {}; const meta = catalog(code); const stored = estimatedSiteStored(site); const owned = site.ownerCode === me()?.countryCode;
+  const tooltip = $('#mapTooltip'); tooltip.innerHTML = `<em>${owned?'ВАШЕ ПРЕДПРИЯТИЕ':site.ownerCode?'ГОСУДАРСТВЕННЫЙ ОБЪЕКТ':'ЛИЦЕНЗИЯ ПРОДАЁТСЯ'}</em><b>${definition.icon||'⛏'} ${esc(definition.name||site.type)}</b><small>${meta?.flag||''} ${esc(meta?.name||code)} · качество ${Math.round((site.quality||1)*100)}%</small><small>${owned?`В резервуаре ${formatNumber(stored,2)} / ${formatNumber(siteCapacity(site),1)} ед. · ЛКМ собрать`:`Цена предприятия ${formatNumber(site.purchaseCost)} млрд`}</small>`;
+  tooltip.classList.remove('hidden'); moveTooltip(event);
+}
+function renderExtractionSites() {
+  const group = $('#extractionGroup'); if (!group || !app.pathsReady || !app.state) return;
+  const ownCode = me()?.countryCode; const codes = app.layer === 'resources' ? Object.keys(app.state.world.countries) : [...new Set([ownCode, app.selectedCode].filter(Boolean))];
+  const signature = `${app.layer}|${ownCode || ''}|${app.selectedCode || ''}|${codes.map((code) => {
+    const territory = country(code);
+    return `${code}:${(territory?.extractionSites || []).map((site) => `${site.id},${site.ownerCode || ''},${site.level || 1},${site.stored || 0},${site.lastCollectedAt || 0}`).join(';')}`;
+  }).join('|')}`;
+  if (signature === app.extractionSignature) return;
+  app.extractionSignature = signature;
+  group.innerHTML = '';
+  const labels = { iron:'Fe', gold:'Au', oil:'●', copper:'Cu', uranium:'U', rare_earth:'RE', coal:'C' };
+  for (const code of codes) {
+    const territory = country(code); if (!territory || territory.eliminated && !territory.absorbedBy) continue;
+    for (const site of territory.extractionSites || []) {
+      const definition = app.state.definitions.commodities?.[site.type] || {}; const [x, y] = extractionPoint(code, site); const stored = estimatedSiteStored(site); const capacity = siteCapacity(site);
+      const node = document.createElementNS('http://www.w3.org/2000/svg', 'g'); const owned = site.ownerCode === ownCode; const foreign = code !== ownCode && territory.absorbedBy !== ownCode;
+      node.setAttribute('class', `extraction-site ${owned?'owned':site.ownerCode?'operating':'available'}${foreign?' foreign':''}${stored>=capacity*.98?' full':''}`); node.setAttribute('data-site', site.id); node.setAttribute('data-site-country', code); node.setAttribute('transform', `translate(${x} ${y})`); node.style.setProperty('--site-color', definition.color || '#d8b867');
+      const halo = document.createElementNS('http://www.w3.org/2000/svg', 'circle'); halo.setAttribute('class','site-halo'); halo.setAttribute('r', app.layer === 'resources' ? '5.4' : '4.7');
+      const core = document.createElementNS('http://www.w3.org/2000/svg', 'circle'); core.setAttribute('class','site-core'); core.setAttribute('r','3.35');
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text'); text.textContent = labels[site.type] || '⛏'; text.setAttribute('y','.25');
+      node.append(halo, core, text); node.addEventListener('pointerenter', (event) => showExtractionTooltip(event, code, site)); node.addEventListener('pointermove', moveTooltip); node.addEventListener('pointerleave', hideTooltip); group.append(node);
+    }
+  }
+}
+function activateExtractionSite(code, siteId) {
+  const site = country(code)?.extractionSites?.find((item) => item.id === siteId); if (!site) return;
+  if (site.ownerCode === me()?.countryCode) {
+    send({ type:'action', action:'extraction', id:'collect', target:code, siteId });
+    return;
+  }
+  app.marketFocus = { countryCode:code, siteId }; openCommodityMarket();
+}
 
 function colorScale(value, min, max, low, high) {
   const t = Math.max(0, Math.min(1, (value - min) / Math.max(1, max - min)));
@@ -593,14 +668,19 @@ function renderMapStyles() {
     if (app.layer === 'political') fill = politicalColor(c?.absorbedBy || c?.controllerCode || code);
     if (app.layer === 'economy') fill = colorScale(Math.log10((c?.gdp || 0) + 1), 0, maxGdp, '203039', '42b99c');
     if (app.layer === 'military') fill = colorScale(c?.militaryPower || 0, 0, maxPower, '26343b', 'cb685f');
+    if (app.layer === 'resources') {
+      const potential = (c?.extractionSites || []).reduce((sum, site) => sum + (site.quality || 1) * (site.ownerCode ? 1.25 : 1), 0);
+      fill = colorScale(potential, 0, 4.5, '263238', '9e7c35');
+    }
     if (app.layer === 'relations' && me()?.countryCode) {
       const rel = code === me().countryCode ? 100 : app.state.relations[code] || 0;
       fill = rel >= 0 ? colorScale(rel, 0, 100, '293a40', '4eaaa2') : colorScale(-rel, 0, 100, '34373b', 'b45555');
     }
     path.style.fill = fill;
   });
-  $('#biomeLayer').style.opacity = app.layer === 'terrain' ? '1' : '.12';
+  $('#biomeLayer').style.opacity = app.layer === 'terrain' ? '1' : app.layer === 'resources' ? '.3' : '.12';
   renderFronts();
+  renderExtractionSites();
 }
 
 function applyMapTransform() {
@@ -609,6 +689,7 @@ function applyMapTransform() {
   $('#terrainGroup').setAttribute('transform', `translate(${x} ${y}) scale(${k})`);
   $('#frontGroup').setAttribute('transform', `translate(${x} ${y}) scale(${k})`);
   $('#markerGroup').setAttribute('transform', `translate(${x} ${y}) scale(${k})`);
+  $('#extractionGroup').setAttribute('transform', `translate(${x} ${y}) scale(${k})`);
 }
 function zoomMap(factor, cx = 600, cy = 300) {
   const old = app.transform.k;
@@ -630,6 +711,8 @@ $('#mapViewport').addEventListener('pointerdown', (event) => {
   app.drag = {
     px: event.clientX, py: event.clientY, x: app.transform.x, y: app.transform.y,
     code: event.target.closest('[data-code]')?.dataset.code || null,
+    siteId: event.target.closest('[data-site]')?.dataset.site || null,
+    siteCountry: event.target.closest('[data-site]')?.dataset.siteCountry || null,
     moved: false
   };
 });
@@ -649,7 +732,8 @@ $('#mapViewport').addEventListener('pointerup', () => {
   const gesture = app.drag;
   app.drag = null;
   $('#mapViewport').classList.remove('dragging');
-  if (gesture?.code && !gesture.moved) chooseMapCountry(gesture.code);
+  if (gesture?.siteId && !gesture.moved) activateExtractionSite(gesture.siteCountry, gesture.siteId);
+  else if (gesture?.code && !gesture.moved) chooseMapCountry(gesture.code);
 });
 $('#mapViewport').addEventListener('pointercancel', () => { app.drag = null; $('#mapViewport').classList.remove('dragging'); });
 
@@ -686,7 +770,47 @@ function renderTop() {
   const techGain = c ? 1 + c.science / 100 + (myTechBonuses().developmentPoints || 0) : 0;
   $('#techPerTurn').textContent = c ? `+${formatNumber(techGain, 1)}/ход` : '—';
   $('#techPointBadge').textContent = c ? formatNumber(c.techPoints, 0) : '0';
+  const market = state.world.commodityMarket; const best = Object.entries(market?.multipliers || {}).sort(([,a],[,b])=>b-a)[0]; const definition = best ? state.definitions.commodities?.[best[0]] : null;
+  $('#commodityBestRate').textContent = best ? `${definition?.shortName||best[0]} · ×${formatNumber(best[1],2)}` : 'Рынок закрыт';
+  updateCommodityCountdown();
 }
+
+function commodityCountdownText() {
+  const seconds = Math.max(0, Math.ceil(((app.state?.world?.commodityMarket?.nextUpdateAt || Date.now()) - Date.now()) / 1000));
+  return `${String(Math.floor(seconds / 60)).padStart(2,'0')}:${String(seconds % 60).padStart(2,'0')}`;
+}
+function updateCommodityCountdown() {
+  const text = commodityCountdownText(); if ($('#commodityTimer')) $('#commodityTimer').textContent = text; if ($('#commodityModalTimer')) $('#commodityModalTimer').textContent = text;
+  if (!app.state || $('#commodityModal')?.classList.contains('hidden')) return;
+  $$('[data-site-live]').forEach((node) => { const [code,id]=node.dataset.siteLive.split('|');const site=country(code)?.extractionSites?.find((item)=>item.id===id);if(!site)return;const value=estimatedSiteStored(site);node.textContent=`${formatNumber(value,2)} / ${formatNumber(siteCapacity(site),1)}`;const bar=document.querySelector(`[data-site-bar="${id}"]`);if(bar)bar.style.width=`${Math.min(100,value/siteCapacity(site)*100)}%`; });
+}
+function commodityTerritories() {
+  const ownCode = me()?.countryCode; if (!ownCode) return [];
+  if (app.marketFocus?.countryCode && country(app.marketFocus.countryCode)) return [country(app.marketFocus.countryCode)];
+  return Object.values(app.state.world.countries).filter((item) => item.code === ownCode || item.absorbedBy === ownCode);
+}
+function renderCommodityMarket() {
+  if (!app.state || $('#commodityModal').classList.contains('hidden')) return;
+  const own = myCountry(); const ownCode = own?.code; const commodities = app.state.definitions.commodities || {}; const territories = commodityTerritories();
+  const focusMeta = territories.length === 1 ? catalog(territories[0].code) : catalog(ownCode); $('#commodityCountryTitle').textContent = focusMeta ? `${focusMeta.flag} ${focusMeta.name}` : 'Мои месторождения';
+  const siteRows = territories.flatMap((territory) => (territory.extractionSites || []).map((site) => ({ territory, site })));
+  $('#extractionSiteList').innerHTML = siteRows.map(({territory,site}) => {
+    const definition=commodities[site.type]||{};const stored=estimatedSiteStored(site);const capacity=siteCapacity(site);const rate=siteRate(site);const managed=site.ownerCode===ownCode;const canBuy=!site.ownerCode&&(territory.code===ownCode||territory.absorbedBy===ownCode);const focused=app.marketFocus?.siteId===site.id;const upgrade=siteUpgradeCost(site);
+    const status=managed?`УРОВЕНЬ ${site.level} · ГОСУДАРСТВЕННОЕ`:site.ownerCode?'ПРЕДПРИЯТИЕ УЖЕ РАБОТАЕТ':'НЕРАЗРАБОТАННАЯ ЛИЦЕНЗИЯ';
+    const actions=canBuy?`<button class="purchase" data-extraction="buy" data-target="${territory.code}" data-site-id="${site.id}" ${own.treasury<site.purchaseCost?'disabled':''}>КУПИТЬ ПРЕДПРИЯТИЕ · ${site.purchaseCost} МЛРД</button>`:managed?`<button data-extraction="collect" data-target="${territory.code}" data-site-id="${site.id}" ${stored<.03?'disabled':''}>СОБРАТЬ ${formatNumber(stored,2)} ЕД.</button><button data-extraction="upgrade" data-target="${territory.code}" data-site-id="${site.id}" ${site.level>=3||own.treasury<upgrade?'disabled':''}>${site.level>=3?'МАКС. УРОВЕНЬ':`УЛУЧШИТЬ · ${upgrade} МЛРД`}</button>`:'<button class="purchase" disabled>НЕДОСТУПНО ДЛЯ ВАШЕЙ СТРАНЫ</button>';
+    return `<article class="mine-card${focused?' focused':''}" style="--mine-color:${definition.color||'#d6b55f'}"><header><i>${definition.icon||'⛏'}</i><div><small>${status}</small><b>${esc(definition.name||site.type)} · ${catalog(territory.code)?.flag||''} ${esc(catalog(territory.code)?.name||territory.code)}</b></div><strong>${Math.round((site.quality||1)*100)}%</strong></header><div class="mine-stats"><span><small>ДОБЫЧА</small><b>${formatNumber(rate,2)} ед./мин</b></span><span><small>РЕЗЕРВУАР</small><b data-site-live="${territory.code}|${site.id}">${formatNumber(stored,2)} / ${formatNumber(capacity,1)}</b></span><span><small>РЫНОЧНАЯ ЦЕНА</small><b>${formatNumber(site.purchaseCost)} млрд</b></span></div><div class="mine-storage"><i data-site-bar="${site.id}" style="width:${Math.min(100,stored/capacity*100)}%"></i></div><p>${managed?'ЛКМ по значку на карте собирает весь резервуар без открытия этого окна.':canBuy?'После покупки производство начинается сразу и продолжается в реальном времени.':'Объект можно изучить, но купить или собирать его может только владелец территории.'}</p><div class="mine-actions">${actions}</div></article>`;
+  }).join('') || '<div class="empty-collection">На этой территории нет доступных геологических объектов.</div>';
+
+  const market=app.state.world.commodityMarket||{multipliers:{}};const tradeTechnology=Math.min(.18,(myTechBonuses().tradeBonus||0)*.2);
+  $('#commodityWarehouse').innerHTML=Object.entries(commodities).map(([id,definition])=>{const stored=Number(own?.commodityStorage?.[id])||0;const multiplier=Number(market.multipliers?.[id])||1;const price=definition.basePrice*multiplier;const revenue=stored*price*(1+tradeTechnology);const tone=multiplier>=1.55?' hot':multiplier<.9?' weak':'';const strategic=definition.strategicResource?app.state.definitions.resources?.[definition.strategicResource]:null;return`<article class="warehouse-card${tone}" style="--commodity-color:${definition.color}"><i>${definition.icon}</i><div><small>${esc(definition.supplier)} · ${esc(definition.name)}</small><b>Склад: ${formatNumber(stored,2)} ед. · ${formatNumber(price,1)} млрд/ед.</b><p>${multiplier>=1.55?'Высокий спрос — удачный момент продажи':multiplier<.9?'Слабый контракт — можно дождаться следующего окна':'Рынок находится в обычном диапазоне'}${tradeTechnology?` · технология торговли +${Math.round(tradeTechnology*100)}%`:''}</p></div><div class="warehouse-rate"><strong>×${formatNumber(multiplier,2)}</strong><em>${multiplier>=1.55?'АЖИОТАЖ':multiplier<.9?'СПАД':'СТАБИЛЬНО'}</em></div><div class="warehouse-actions"><button data-extraction="sell" data-commodity="${id}" ${stored<.05?'disabled':''}>ПРОДАТЬ ВСЁ · +${formatNumber(revenue,1)} МЛРД</button><button class="refine" data-extraction="refine" data-commodity="${id}" ${!strategic||stored<.05?'disabled':''}>${strategic?`ПЕРЕРАБОТАТЬ В ${esc(strategic.name).toUpperCase()}`:'ТОЛЬКО ПРОДАЖА'}</button></div></article>`}).join('');
+  updateCommodityCountdown();
+}
+function openCommodityMarket() { if (!app.state || !me()?.countryCode) return toast('Сначала выберите государство',true); $('#commodityModal').classList.remove('hidden'); renderCommodityMarket(); }
+function closeCommodityMarket() { $('#commodityModal').classList.add('hidden'); app.marketFocus=null; }
+
+$('#openCommodityMarket').addEventListener('click',()=>{app.marketFocus=null;openCommodityMarket()}); $('#closeCommodityMarket').addEventListener('click',closeCommodityMarket); $('#commodityModal').addEventListener('click',(event)=>{
+  if(event.target.closest('[data-close-commodity]'))return closeCommodityMarket();const button=event.target.closest('[data-extraction]');if(!button)return;send({type:'action',action:'extraction',id:button.dataset.extraction,target:button.dataset.target,siteId:button.dataset.siteId,commodity:button.dataset.commodity});
+});
 
 function metric(label, value) {
   return `<div class="metric-card"><div class="metric-head"><span>${label}</span><b>${formatNumber(value)} / 100</b></div><div class="bar"><i style="width:${Math.max(0, Math.min(100, value))}%"></i></div></div>`;
@@ -707,6 +831,11 @@ function renderStatecraft(c, meta) {
   const crisisHtml=crisis?`<article class="crisis-card"><header><span>${crisis.icon}</span><div><small>МИРОВОЙ КРИЗИС</small><h3>${esc(crisis.name)}</h3></div><time>ДО ${world.globalCrisis.endsAt} ХОДА</time></header><p>${esc(crisis.description)}</p>${crisisChoice?`<div class="crisis-resolved">Решение принято: ${esc(crisis.options.find((item)=>item.id===crisisChoice.option)?.label||crisisChoice.option)}</div>`:`<div class="crisis-options">${crisis.options.map((option)=>`<button data-crisis-response="${option.id}"><b>${esc(option.label)}</b><span>${esc(option.note)}</span></button>`).join('')}</div>`}</article>`:'';
   const politicalHtml=c.politicalCrisis?`<article class="political-alert"><small>⚠ ВНУТРЕННИЙ КРИЗИС</small><h3>${c.politicalCrisis.id==='coup_risk'?'Угроза переворота':'Массовые протесты'}</h3><p>Оппозиция перешла критический рубеж. Пока кризис не решён, стабильность и экономика остаются под давлением.</p><div class="government-actions"><button data-political-response="negotiate"><b>Переговоры · 24 млрд</b><span>Умеренное снижение протеста без репутационного удара</span></button><button data-political-response="elections"><b>Досрочные выборы · 34 млрд</b><span>Самый сильный мирный эффект</span></button><button data-political-response="suppress"><b>Силовое подавление · 18 млрд</b><span>Стабильность растёт, но счастье и репутация падают</span></button></div></article>`:'';
   const resources=Object.entries(definitions.resources||{}).map(([id,item])=>`<div class="resource-stock"><i>${item.icon}</i><div><b>${esc(item.name)}</b><small>+${formatNumber(c.resourceProduction?.[id],1)} / ход</small></div><strong>${formatNumber(c.resources?.[id],1)}</strong></div>`).join('');
+  const ownedSites=Object.values(world.countries).flatMap((territory)=>(territory.code===c.code||territory.absorbedBy===c.code)?(territory.extractionSites||[]):[]).filter((site)=>site.ownerCode===c.code);
+  const rawStock=Object.values(c.commodityStorage||{}).reduce((sum,value)=>sum+(Number(value)||0),0);
+  const bestCommodity=Object.entries(world.commodityMarket?.multipliers||{}).sort(([,a],[,b])=>b-a)[0];
+  const commodityName=definitions.commodities?.[bestCommodity?.[0]]?.shortName||'—';
+  const commodityHtml=`<button class="commodity-summary" data-open-commodity-panel><span>⛏</span><div><small>ФИЗИЧЕСКАЯ ДОБЫЧА · ОБЩИЙ РЫНОК</small><b>${ownedSites.length} предприятий · ${formatNumber(rawStock,2)} ед. на складе</b><p>Лучший контракт сейчас: ${esc(commodityName)} ×${formatNumber(bestCommodity?.[1]||1,2)}. Открыть месторождения, поставщиков и переработку.</p></div><strong>ОТКРЫТЬ →</strong></button>`;
   const shortage=c.lastShortage?.turn===world.turn?`<div class="shortage-alert">ДЕФИЦИТ: ${c.lastShortage.resources.map((id)=>esc(definitions.resources[id]?.name||id)).join(', ')}. Падает стабильность и готовность.</div>`:'';
   const factions=Object.entries(definitions.factions||{}).map(([id,item])=>`<div class="faction-row ${id==='opposition'&&(c.factions?.[id]||0)>=70?'danger':''}"><i>${item.icon}</i><div><b>${esc(item.name)}</b><span>${formatNumber(c.factions?.[id],1)}%</span><div class="bar"><i style="width:${Math.min(100,c.factions?.[id]||0)}%"></i></div></div><span>${id==='opposition'?'РИСК':'ОПОРА'}</span></div>`).join('');
   const politicalUsed=c.lastPoliticalTurn===world.turn;
@@ -720,7 +849,7 @@ function renderStatecraft(c, meta) {
   const advisors=Object.entries(definitions.advisors||{}).map(([id,item])=>{const hired=Object.values(c.advisors||{}).includes(id);return `<article class="advisor-card ${hired?'hired':''}"><header><i>${item.icon}</i><div><b>${esc(item.name)}</b><small>${esc(item.role)}</small></div></header><p>${esc(item.effects)}</p><button data-advisor="${id}" ${hired?'disabled':''}>${hired?'В ПРАВИТЕЛЬСТВЕ':`Нанять · ${item.cost} млрд`}</button></article>`}).join('');
   const units=Object.entries(definitions.unitPrograms||{}).map(([id,item])=>`<article class="unit-program"><header><i>${item.icon}</i><div><b>${esc(item.name)}</b><small>Сейчас: ${formatNumber(c.units?.[id],1)}</small></div></header><p>${esc(item.description)}</p><button data-unit-program="${id}">Развернуть +${item.gain} · ${item.cost} млрд</button></article>`).join('');
   const reports=(c.intelligenceReports||[]).slice(0,5).map((item)=>`<div class="intel-report"><small>${catalog(item.target)?.flag||''} ${esc(catalog(item.target)?.name||item.target)} · ХОД ${item.turn}</small><br>${esc(item.report)}</div>`).join('')||'<div class="empty-collection">Разведданных пока нет. Выберите иностранное государство и назначьте операцию.</div>';
-  return `${crisisHtml}${politicalHtml}<div class="panel-kicker"><span>УПРАВЛЕНИЕ ДЕРЖАВОЙ</span><i>ПОДДЕРЖКА ${formatNumber(governmentSupport(c),1)}</i></div><article class="strategy-goal"><header><span>${goal.icon||'◇'}</span><div><small>ЛИЧНАЯ СТРАТЕГИЯ ПОБЕДЫ</small><h3>${esc(goal.name||'Большая стратегия')}</h3></div></header><p>${esc(goal.description||'')}</p><div class="bar"><i style="width:${Math.min(100,c.victoryProgress||0)}%"></i></div><footer><span>${c.victoryAchieved?'ПОБЕДА ДОСТИГНУТА':'ДОЛГОСРОЧНАЯ ЦЕЛЬ'}</span><b>${formatNumber(c.victoryProgress,1)}%</b></footer></article><div class="section-divider">СТРАТЕГИЧЕСКИЕ РЕСУРСЫ</div>${shortage}<div class="resource-grid">${resources}</div><div class="section-divider">ПОЛИТИЧЕСКИЕ СИЛЫ</div><div class="faction-list">${factions}</div><div class="government-support"><span>Общая поддержка правительства</span><b>${formatNumber(governmentSupport(c),1)}</b></div>${reformHtml}<div class="section-divider">ДИПЛОМАТИЧЕСКИЙ БЛОК</div>${allianceInvites}${tradeOffers}${allianceHtml}<div class="section-divider">ТОРГОВЫЕ МАРШРУТЫ</div><div class="route-list">${routes}</div><div class="section-divider">ИНФОРМАЦИОННАЯ ПОЛИТИКА</div><div class="media-stats"><span><small>ДОВЕРИЕ СМИ</small><b>${formatNumber(c.media.credibility,1)}</b></span><span><small>ПРОПАГАНДА</small><b>${formatNumber(c.media.propaganda,1)}</b></span><span><small>ВОЙНА</small><b>${formatNumber(c.media.warSupport,1)}</b></span></div><div class="media-actions"><button data-media="unity">Кампания единства · 16 млрд</button><button data-media="war" ${c.atWar.length?'':'disabled'}>Поддержка фронта · 22 млрд</button></div><div class="section-divider">СОВЕТ ПРАВИТЕЛЬСТВА</div><div class="advisor-list">${advisors}</div><div class="section-divider">СПЕЦИАЛИЗАЦИЯ ВОЙСК</div><div class="unit-program-list">${units}</div><div class="section-divider">ДОКЛАДЫ РАЗВЕДКИ</div><div class="advisor-list">${reports}</div>`;
+  return `${crisisHtml}${politicalHtml}<div class="panel-kicker"><span>УПРАВЛЕНИЕ ДЕРЖАВОЙ</span><i>ПОДДЕРЖКА ${formatNumber(governmentSupport(c),1)}</i></div><article class="strategy-goal"><header><span>${goal.icon||'◇'}</span><div><small>ЛИЧНАЯ СТРАТЕГИЯ ПОБЕДЫ</small><h3>${esc(goal.name||'Большая стратегия')}</h3></div></header><p>${esc(goal.description||'')}</p><div class="bar"><i style="width:${Math.min(100,c.victoryProgress||0)}%"></i></div><footer><span>${c.victoryAchieved?'ПОБЕДА ДОСТИГНУТА':'ДОЛГОСРОЧНАЯ ЦЕЛЬ'}</span><b>${formatNumber(c.victoryProgress,1)}%</b></footer></article><div class="section-divider">СТРАТЕГИЧЕСКИЕ РЕСУРСЫ</div>${shortage}<div class="resource-grid">${resources}</div>${commodityHtml}<div class="section-divider">ПОЛИТИЧЕСКИЕ СИЛЫ</div><div class="faction-list">${factions}</div><div class="government-support"><span>Общая поддержка правительства</span><b>${formatNumber(governmentSupport(c),1)}</b></div>${reformHtml}<div class="section-divider">ДИПЛОМАТИЧЕСКИЙ БЛОК</div>${allianceInvites}${tradeOffers}${allianceHtml}<div class="section-divider">ТОРГОВЫЕ МАРШРУТЫ</div><div class="route-list">${routes}</div><div class="section-divider">ИНФОРМАЦИОННАЯ ПОЛИТИКА</div><div class="media-stats"><span><small>ДОВЕРИЕ СМИ</small><b>${formatNumber(c.media.credibility,1)}</b></span><span><small>ПРОПАГАНДА</small><b>${formatNumber(c.media.propaganda,1)}</b></span><span><small>ВОЙНА</small><b>${formatNumber(c.media.warSupport,1)}</b></span></div><div class="media-actions"><button data-media="unity">Кампания единства · 16 млрд</button><button data-media="war" ${c.atWar.length?'':'disabled'}>Поддержка фронта · 22 млрд</button></div><div class="section-divider">СОВЕТ ПРАВИТЕЛЬСТВА</div><div class="advisor-list">${advisors}</div><div class="section-divider">СПЕЦИАЛИЗАЦИЯ ВОЙСК</div><div class="unit-program-list">${units}</div><div class="section-divider">ДОКЛАДЫ РАЗВЕДКИ</div><div class="advisor-list">${reports}</div>`;
 }
 
 function renderPanel() {
@@ -791,6 +920,7 @@ $('#gameTabs').addEventListener('click', (event) => {
   app.activeTab = button.dataset.tab; $$('#gameTabs button').forEach((b) => b.classList.toggle('active', b === button)); renderPanel();
 });
 $('#panelContent').addEventListener('click', (event) => {
+  if (event.target.closest('[data-open-commodity-panel]')) { app.marketFocus=null; openCommodityMarket(); return; }
   const action = event.target.closest('[data-action]');
   if (action) send({ type: 'action', action: action.dataset.action, id: action.dataset.id });
   const inspect = event.target.closest('[data-inspect]'); if (inspect) chooseMapCountry(inspect.dataset.inspect);
@@ -1165,6 +1295,7 @@ function render() {
   if (!app.pathsReady && app.mapData) buildMap(); else renderMapStyles();
   renderPanel(); renderInspector(); renderNews();
   renderTechTree();
+  renderCommodityMarket();
   music.setMode(myCountry()?.atWar?.length || myCountry()?.supportingWarId ? 'war' : 'calm');
   if (!player?.countryCode) openCountryModal();
   else $('#countryModal').classList.add('hidden');
@@ -1174,6 +1305,7 @@ setInterval(() => {
   if (!app.state) return;
   const seconds = Math.max(0, Math.ceil((app.state.world.nextTurnAt - Date.now()) / 1000));
   $('#turnTimer').textContent = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+  updateCommodityCountdown();
   updateNewsCooldown();
   const hostileSeconds=Math.max(0,Math.ceil((120000-(Date.now()-(myCountry()?.lastHostileActionAt||0)))/1000));
   if (hostileSeconds !== app.lastHostileSecond && app.selectedCode && !activeWarForCountry(me()?.countryCode)) {
@@ -1183,5 +1315,5 @@ setInterval(() => {
 }, 1000);
 
 window.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') { $('#inspector').classList.remove('open'); $('#controlPanel').classList.remove('open'); $('#techModal').classList.add('hidden'); closeGuide(); closeInterfaceSettings(); }
+  if (event.key === 'Escape') { $('#inspector').classList.remove('open'); $('#controlPanel').classList.remove('open'); $('#techModal').classList.add('hidden'); closeGuide(); closeInterfaceSettings(); closeCommodityMarket(); }
 });

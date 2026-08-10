@@ -232,6 +232,27 @@ const STRATEGIC_RESOURCES = {
   energy: { name: 'Энергия', icon: 'ϟ', price: 5, description: 'Питает промышленность, города и цифровую инфраструктуру.' }
 };
 
+const COMMODITY_MARKET_INTERVAL_MS = 10 * 60 * 1000;
+const EXTRACTION_COMMODITIES = {
+  iron: { name: 'Железная руда', shortName: 'Железо', icon: '⬢', color: '#a9b3b4', basePrice: 5.4, purchaseCost: 42, rate: .34, capacity: 8, strategicResource: 'metals', conversion: 2.2, supplier: 'Atlas Steel' },
+  gold: { name: 'Золотая руда', shortName: 'Золото', icon: '◆', color: '#edc75f', basePrice: 13.5, purchaseCost: 86, rate: .13, capacity: 4.5, strategicResource: null, conversion: 0, supplier: 'Aurum Reserve' },
+  oil: { name: 'Сырая нефть', shortName: 'Нефть', icon: '●', color: '#32383b', basePrice: 8.2, purchaseCost: 64, rate: .27, capacity: 7, strategicResource: 'fuel', conversion: 2.4, supplier: 'Helios Energy' },
+  copper: { name: 'Медная руда', shortName: 'Медь', icon: '⬡', color: '#d18455', basePrice: 6.6, purchaseCost: 49, rate: .3, capacity: 7.5, strategicResource: 'metals', conversion: 1.8, supplier: 'Meridian Works' },
+  uranium: { name: 'Урановый концентрат', shortName: 'Уран', icon: '☢', color: '#a5e66c', basePrice: 15.2, purchaseCost: 102, rate: .1, capacity: 3.5, strategicResource: 'energy', conversion: 3, supplier: 'Orion Atomics' },
+  rare_earth: { name: 'Редкоземельная руда', shortName: 'Редкие земли', icon: '◇', color: '#9f84df', basePrice: 11.8, purchaseCost: 78, rate: .16, capacity: 5, strategicResource: 'rare', conversion: 1.7, supplier: 'Nova Components' },
+  coal: { name: 'Энергетический уголь', shortName: 'Уголь', icon: '■', color: '#707a7d', basePrice: 4.1, purchaseCost: 34, rate: .43, capacity: 10, strategicResource: 'energy', conversion: 1.7, supplier: 'Continental Power' }
+};
+
+const GEOLOGY_BONUSES = {
+  oil: new Set(['SAU','RUS','USA','CAN','IRN','IRQ','ARE','QAT','KWT','VEN','NGA','NOR','KAZ','AZE','DZA','LBY','BRA']),
+  gold: new Set(['CHN','AUS','RUS','USA','CAN','ZAF','GHA','MEX','BRA','IDN','KAZ','UZB']),
+  iron: new Set(['AUS','BRA','CHN','IND','RUS','ZAF','CAN','UKR','SWE','KAZ']),
+  copper: new Set(['CHL','PER','COD','CHN','USA','AUS','ZMB','RUS','MEX','KAZ']),
+  uranium: new Set(['KAZ','CAN','NAM','AUS','UZB','RUS','NER','CHN','ZAF']),
+  rare_earth: new Set(['CHN','VNM','BRA','RUS','IND','AUS','USA','GRL','KAZ','MNG']),
+  coal: new Set(['CHN','IND','IDN','USA','AUS','RUS','ZAF','DEU','POL','KAZ'])
+};
+
 const POLITICAL_FACTIONS = {
   people: { name: 'Граждане', icon: '◉', description: 'Хотят доступных услуг, низких налогов и мира.' },
   business: { name: 'Бизнес', icon: '◆', description: 'Требует торговли, инфраструктуры и предсказуемых правил.' },
@@ -335,6 +356,138 @@ function initialStrategicEconomy(meta, seed, development) {
   return { production, stock };
 }
 
+function commodityMarketForTime(now = Date.now()) {
+  const cycle = Math.floor(now / COMMODITY_MARKET_INTERVAL_MS);
+  const multipliers = Object.fromEntries(Object.keys(EXTRACTION_COMMODITIES).map((id) => [id, round(.7 + hashFloat(`global-commodity-market:${cycle}:${id}`) * 1.3, 2)]));
+  return {
+    cycle,
+    openedAt: cycle * COMMODITY_MARKET_INTERVAL_MS,
+    nextUpdateAt: (cycle + 1) * COMMODITY_MARKET_INTERVAL_MS,
+    multipliers
+  };
+}
+
+function updateCommodityMarket(world, now = Date.now(), announce = true) {
+  const currentCycle = Math.floor(now / COMMODITY_MARKET_INTERVAL_MS);
+  if (world.commodityMarket?.cycle === currentCycle) return false;
+  world.commodityMarket = commodityMarketForTime(now);
+  if (announce && Array.isArray(world.news)) {
+    const hottest = Object.entries(world.commodityMarket.multipliers).sort(([, a], [, b]) => b - a)[0];
+    const commodity = EXTRACTION_COMMODITIES[hottest[0]];
+    pushNews(world, `Сырьевая биржа обновила десятминутные контракты. Лучший спрос: ${commodity.name} по коэффициенту ×${hottest[1]}.`, hottest[1] >= 1.6 ? 'gold' : 'blue');
+  }
+  return true;
+}
+
+function initialExtractionSites(meta, seed, now = Date.now()) {
+  const area = Number(meta.area) || 1;
+  const count = area < 1500 ? 1 : area < 120000 ? 2 : 3;
+  const ranked = Object.keys(EXTRACTION_COMMODITIES).map((type) => {
+    let geology = GEOLOGY_BONUSES[type]?.has(meta.code) ? 1.25 : 0;
+    if (type === 'oil' && ['Asia','Africa'].includes(meta.region)) geology += .18;
+    if (type === 'gold' && ['Africa','Americas','Oceania'].includes(meta.region)) geology += .14;
+    if (type === 'coal' && ['Asia','Europe'].includes(meta.region)) geology += .12;
+    return { type, score: hashFloat(`${seed}:deposit:${meta.code}:${type}`) + geology };
+  }).sort((a, b) => b.score - a.score).slice(0, count);
+  return ranked.map(({ type }, index) => {
+    const definition = EXTRACTION_COMMODITIES[type];
+    const quality = round(.82 + hashFloat(`${seed}:deposit-quality:${meta.code}:${index}:${type}`) * .5, 2);
+    return {
+      id: `${meta.code}-${index + 1}-${type}`, type, level: 1, ownerCode: null,
+      quality, purchaseCost: Math.round(definition.purchaseCost * (.88 + quality * .18)),
+      baseRate: round(definition.rate * quality, 3), baseCapacity: round(definition.capacity * (.9 + quality * .16), 2),
+      stored: 0, lastAccruedAt: now, lastCollectedAt: 0, producedTotal: 0,
+      position: { u: hashFloat(`${seed}:deposit-x:${meta.code}:${index}`), v: hashFloat(`${seed}:deposit-y:${meta.code}:${index}`) }
+    };
+  });
+}
+
+function extractionRate(site) { return round((site.baseRate || EXTRACTION_COMMODITIES[site.type]?.rate || .1) * (1 + Math.max(0, (site.level || 1) - 1) * .68), 3); }
+function extractionCapacity(site) { return round((site.baseCapacity || EXTRACTION_COMMODITIES[site.type]?.capacity || 5) * (1 + Math.max(0, (site.level || 1) - 1) * .72), 2); }
+function extractionUpgradeCost(site) { return Math.round((site.purchaseCost || 50) * (.55 + (site.level || 1) * .32)); }
+
+function accrueExtractionSite(site, now = Date.now()) {
+  const previous = Number(site.lastAccruedAt) || now;
+  site.lastAccruedAt = now;
+  if (!site.ownerCode) return Number(site.stored) || 0;
+  const elapsedMinutes = clamp((now - previous) / 60000, 0, 24 * 60);
+  const before = Number(site.stored) || 0;
+  site.stored = round(Math.min(extractionCapacity(site), before + elapsedMinutes * extractionRate(site)), 3);
+  site.producedTotal = round((site.producedTotal || 0) + Math.max(0, site.stored - before), 3);
+  return site.stored;
+}
+
+function extractionTerritory(world, country, targetCode) {
+  const territory = world.countries[targetCode];
+  return territory && (territory.code === country.code || territory.absorbedBy === country.code) ? territory : null;
+}
+
+function performExtractionAction(world, country, message, now = Date.now()) {
+  updateCommodityMarket(world, now);
+  if (message.id === 'sell') {
+    const type = EXTRACTION_COMMODITIES[message.commodity] ? message.commodity : null;
+    if (!type) return { ok: false, error: 'Неизвестный вид сырья' };
+    const available = Number(country.commodityStorage?.[type]) || 0;
+    const requested = Number(message.amount);
+    const amount = round(Math.min(available, Number.isFinite(requested) && requested > 0 ? requested : available), 3);
+    if (amount < .05) return { ok: false, error: 'На складе пока нет сырья для продажи' };
+    const definition = EXTRACTION_COMMODITIES[type];
+    const multiplier = world.commodityMarket.multipliers[type];
+    const tradeTechnology = Math.min(.18, (technologyBonuses(country).tradeBonus || 0) * .2);
+    const revenue = round(amount * definition.basePrice * multiplier * (1 + tradeTechnology), 1);
+    country.commodityStorage[type] = round(available - amount, 3);
+    country.treasury = round(country.treasury + revenue, 1);
+    country.commoditySales = round((country.commoditySales || 0) + revenue, 1);
+    country.lastAction = `Продажа сырья компании ${definition.supplier}: +${revenue} млрд`;
+    return { ok: true, toast: `${definition.supplier} купила ${round(amount, 2)} ед. · ×${multiplier} · +${revenue} млрд` };
+  }
+  if (message.id === 'refine') {
+    const type = EXTRACTION_COMMODITIES[message.commodity] ? message.commodity : null;
+    const definition = EXTRACTION_COMMODITIES[type];
+    if (!definition?.strategicResource) return { ok: false, error: 'Это сырьё можно только продать поставщику' };
+    const available = Number(country.commodityStorage?.[type]) || 0;
+    const amount = round(Math.min(available, Math.max(.1, Number(message.amount) || available)), 3);
+    if (amount < .05) return { ok: false, error: 'На складе нет сырья для переработки' };
+    const strategic = definition.strategicResource; const free = Math.max(0, 150 - (country.resources[strategic] || 0));
+    const used = Math.min(amount, free / definition.conversion);
+    if (used < .05) return { ok: false, error: 'Стратегический склад уже заполнен' };
+    country.commodityStorage[type] = round(available - used, 3);
+    const gained = round(used * definition.conversion, 1);
+    country.resources[strategic] = round((country.resources[strategic] || 0) + gained, 1);
+    return { ok: true, toast: `${definition.shortName}: переработано ${round(used, 2)} ед. · получено ${gained} ед. ресурса` };
+  }
+
+  const territory = extractionTerritory(world, country, String(message.target || '').slice(0, 3));
+  if (!territory) return { ok: false, error: 'Разрабатывать можно только свою или полностью присоединённую территорию' };
+  const site = territory.extractionSites?.find((item) => item.id === message.siteId);
+  if (!site) return { ok: false, error: 'Месторождение больше не существует' };
+  const definition = EXTRACTION_COMMODITIES[site.type];
+  if (message.id === 'buy') {
+    if (site.ownerCode) return { ok: false, error: 'Предприятие уже принадлежит государству' };
+    if (!spend(country, site.purchaseCost)) return { ok: false, error: `Для покупки нужно ${site.purchaseCost} млрд` };
+    site.ownerCode = country.code; site.lastAccruedAt = now; site.stored = 0;
+    country.lastAction = `Приобретено предприятие «${definition.name}»`;
+    return { ok: true, toast: `${definition.name}: предприятие куплено за ${site.purchaseCost} млрд` };
+  }
+  if (site.ownerCode !== country.code) return { ok: false, error: 'Это предприятие не принадлежит вашей стране' };
+  accrueExtractionSite(site, now);
+  if (message.id === 'collect') {
+    const amount = round(site.stored, 3);
+    if (amount < .03) return { ok: false, error: 'Добыча ещё не накопилась' };
+    country.commodityStorage[site.type] = round((country.commodityStorage[site.type] || 0) + amount, 3);
+    site.stored = 0; site.lastCollectedAt = now;
+    return { ok: true, toast: `${definition.icon} Собрано ${round(amount, 2)} ед. · сырьё перемещено на государственный склад` };
+  }
+  if (message.id === 'upgrade') {
+    if (site.level >= 3) return { ok: false, error: 'Предприятие уже достигло максимального уровня' };
+    const cost = extractionUpgradeCost(site);
+    if (!spend(country, cost)) return { ok: false, error: `Для модернизации нужно ${cost} млрд` };
+    site.level += 1; site.lastAccruedAt = now;
+    return { ok: true, toast: `${definition.shortName}: предприятие улучшено до уровня ${site.level}` };
+  }
+  return { ok: false, error: 'Неизвестная операция с месторождением' };
+}
+
 function spendResources(country, costs = {}) {
   for (const [id, amount] of Object.entries(costs)) if ((country.resources?.[id] || 0) < amount) return false;
   for (const [id, amount] of Object.entries(costs)) country.resources[id] = round(country.resources[id] - amount, 1);
@@ -423,6 +576,9 @@ function initialCountry(meta, seed) {
     },
     resources: strategic.stock,
     resourceProduction: strategic.production,
+    commodityStorage: Object.fromEntries(Object.keys(EXTRACTION_COMMODITIES).map((id) => [id, 0])),
+    extractionSites: initialExtractionSites(meta, seed),
+    commoditySales: 0,
     factions: {
       people: round(clamp(44 + r * 30, 25, 82), 1),
       business: round(clamp(42 + development * .28 + r * 18, 28, 84), 1),
@@ -480,6 +636,7 @@ function createWorld(seed = crypto.randomUUID()) {
     allianceInvites: [],
     tradeOffers: [],
     tradeRoutes: [],
+    commodityMarket: commodityMarketForTime(),
     globalCrisis: null,
     crisisHistory: [],
     hallOfFame: [],
@@ -500,6 +657,7 @@ function migrateWorld(world) {
   world.allianceInvites ||= [];
   world.tradeOffers ||= [];
   world.tradeRoutes ||= [];
+  world.commodityMarket ||= commodityMarketForTime();
   world.globalCrisis ??= null;
   world.crisisHistory ||= [];
   world.hallOfFame ||= [];
@@ -527,6 +685,18 @@ function migrateWorld(world) {
       country.resources[id] ??= strategic.stock[id];
       country.resourceProduction[id] ??= strategic.production[id];
     }
+    country.commodityStorage ||= {};
+    for (const id of Object.keys(EXTRACTION_COMMODITIES)) country.commodityStorage[id] ??= 0;
+    country.extractionSites ||= initialExtractionSites(meta, world.seed || 'legacy');
+    for (const site of country.extractionSites) {
+      const definition = EXTRACTION_COMMODITIES[site.type] || EXTRACTION_COMMODITIES.iron;
+      site.level ??= 1; site.ownerCode ??= null; site.quality ??= 1;
+      site.purchaseCost ??= definition.purchaseCost; site.baseRate ??= definition.rate; site.baseCapacity ??= definition.capacity;
+      site.stored ??= 0; site.lastAccruedAt ??= Date.now(); site.lastCollectedAt ??= 0; site.producedTotal ??= 0;
+      site.position ||= { u: hashFloat(`${world.seed}:legacy-site-x:${site.id}`), v: hashFloat(`${world.seed}:legacy-site-y:${site.id}`) };
+      if (country.absorbedBy && site.ownerCode === country.code) site.ownerCode = country.absorbedBy;
+    }
+    country.commoditySales ??= 0;
     country.factions ||= { people: 58, business: 55, military: 55, elites: 58, opposition: 35 };
     for (const id of Object.keys(POLITICAL_FACTIONS)) country.factions[id] ??= id === 'opposition' ? 35 : 55;
     country.advisors ||= {};
@@ -720,6 +890,12 @@ function annexCountry(world, war, winner, loser) {
     by: winner.code, percent: 100, permanent: true, absorbed: true, warId: war.id,
     resistance: 0, resistanceChecks: 0, nextResistanceAt: 0, revolt: null
   };
+  winner.commodityStorage ||= {};
+  for (const [type, amount] of Object.entries(loser.commodityStorage || {})) {
+    winner.commodityStorage[type] = round((winner.commodityStorage[type] || 0) + (Number(amount) || 0), 3);
+    loser.commodityStorage[type] = 0;
+  }
+  for (const site of loser.extractionSites || []) if (site.ownerCode === loser.code) site.ownerCode = winner.code;
   if (!winner.annexed.includes(loser.code)) winner.annexed.push(loser.code);
   for (const territory of Object.values(world.countries)) {
     if (territory.code === loser.code) continue;
@@ -727,6 +903,7 @@ function annexCountry(world, war, winner, loser) {
       territory.absorbedBy = winner.code;
       territory.controllerCode = winner.code;
       if (territory.occupation) territory.occupation.by = winner.code;
+      for (const site of territory.extractionSites || []) if (site.ownerCode === loser.code) site.ownerCode = winner.code;
       if (!winner.annexed.includes(territory.code)) winner.annexed.push(territory.code);
     } else if (territory.occupation?.by === loser.code) {
       territory.occupation.by = winner.code;
@@ -1367,6 +1544,8 @@ function performAction(world, player, message) {
   }
 
   if (country.eliminated || country.absorbedBy) return { ok: false, error: `Ваша страна полностью присоединена к государству ${CATALOG_BY_CODE[country.absorbedBy]?.name || country.absorbedBy}. Вы продолжаете наблюдать за миром.` };
+
+  if (message.action === 'extraction') return performExtractionAction(world, country, message);
 
   if (message.action === 'internal_policy') {
     const plans = {
@@ -2009,6 +2188,25 @@ function performAction(world, player, message) {
 function botTurn(world, country) {
   const meta = CATALOG_BY_CODE[country.code];
   const r = hashFloat(`${world.seed}:${world.turn}:${country.code}`);
+  const botSites = country.extractionSites || [];
+  for (const site of botSites) {
+    if (site.ownerCode !== country.code) continue;
+    accrueExtractionSite(site);
+    if (site.stored >= extractionCapacity(site) * .62) {
+      country.commodityStorage[site.type] = round((country.commodityStorage[site.type] || 0) + site.stored, 3);
+      site.stored = 0; site.lastCollectedAt = Date.now();
+    }
+  }
+  const sale = Object.keys(EXTRACTION_COMMODITIES)
+    .filter((type) => (country.commodityStorage?.[type] || 0) >= .05)
+    .sort((a, b) => (world.commodityMarket?.multipliers?.[b] || 1) - (world.commodityMarket?.multipliers?.[a] || 1))[0];
+  if (sale && ((world.commodityMarket?.multipliers?.[sale] || 1) >= 1.2 || country.commodityStorage[sale] >= 6)) {
+    performExtractionAction(world, country, { id: 'sell', commodity: sale });
+  }
+  if (r < .16) {
+    const license = botSites.filter((site) => !site.ownerCode && site.purchaseCost <= country.treasury * .48).sort((a, b) => a.purchaseCost - b.purchaseCost)[0];
+    if (license) performExtractionAction(world, country, { id: 'buy', target: country.code, siteId: license.id });
+  }
   if (country.atWar.length) {
     const enemy = world.countries[country.atWar[0]];
     const war = enemy && activeWarFor(world, country.code, enemy.code);
@@ -2298,7 +2496,8 @@ function ranking(world) {
 
 module.exports = {
   CATALOG, CATALOG_BY_CODE, DEVELOPMENT_ACTIONS, MILITARY_ACTIONS, BATTLE_TACTICS, MILITARY_DOCTRINES, TECHNOLOGY_TREE, NATIONAL_PROJECTS, DECISIONS, STEALABLE_ASSETS, PLAYER_NEWS_CATEGORIES,
-  STRATEGIC_RESOURCES, POLITICAL_FACTIONS, ADVISORS, UNIT_PROGRAMS, GLOBAL_CRISES, VICTORY_PATHS, WAR_TERRAINS,
+  STRATEGIC_RESOURCES, EXTRACTION_COMMODITIES, COMMODITY_MARKET_INTERVAL_MS, POLITICAL_FACTIONS, ADVISORS, UNIT_PROGRAMS, GLOBAL_CRISES, VICTORY_PATHS, WAR_TERRAINS,
   createWorld, migrateWorld, selectCountry, performAction, advanceTurn, advanceWars, advanceResistance, calculateScores,
-  getRelation, incomeFor, militaryPower, ranking, clamp, technologyBonuses, theftChance, hostileCooldownRemaining, politicalSupport
+  getRelation, incomeFor, militaryPower, ranking, clamp, technologyBonuses, theftChance, hostileCooldownRemaining, politicalSupport,
+  commodityMarketForTime, updateCommodityMarket, initialExtractionSites, accrueExtractionSite, extractionRate, extractionCapacity, extractionUpgradeCost, performExtractionAction
 };
